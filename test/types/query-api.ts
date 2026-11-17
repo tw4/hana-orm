@@ -83,3 +83,12 @@ async function relationOrderChecks() {
   await db.user.groupBy({ by: ["role"], orderBy: { _sum: { email: "asc" } } });
 }
 void relationOrderChecks;
+
+async function nestedCursorChecks() {
+  const users = await db.user.findMany({ select: { id: true, posts: { cursor: { id: 10 }, take: 5, skip: 1, select: { title: true } } } });
+  expectType<Equal<typeof users, { id: number; posts: { title: string }[] }[]>>();
+
+  // @ts-expect-error the cursor must be a unique where input
+  await db.user.findMany({ include: { posts: { cursor: { title: "x" } } } });
+}
+void nestedCursorChecks;

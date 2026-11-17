@@ -193,3 +193,20 @@ test("orderBy relation fields, relation counts and aggregates", { skip: !enabled
   const groups = await db.order.groupBy({ by: ["customerId"], _sum: { total: true }, orderBy: { _sum: { total: "desc" } } });
   assert.deepEqual(groups.map((g) => g._sum.total), [99, 15.5]);
 });
+
+test("cursor pagination inside include", { skip: !enabled }, async () => {
+  const ada = await db.customer.findUniqueOrThrow({ where: { email: "ada@example.com" }, include: { orders: { orderBy: { total: "asc" } } } });
+  const [cheap, expensive] = ada.orders;
+  const fromCheap = await db.customer.findMany({
+    where: { email: { in: ["ada@example.com", "bob@example.com"] } },
+    orderBy: { email: "asc" },
+    select: { email: true, orders: { cursor: { id: cheap!.id }, orderBy: { total: "asc" }, select: { total: true } } },
+  });
+  // the cursor compares order values, so bob's 99 order (after 3 in total order) is kept too
+  assert.deepEqual(fromCheap, [
+    { email: "ada@example.com", orders: [{ total: 3 }, { total: 12.5 }] },
+    { email: "bob@example.com", orders: [{ total: 99 }] },
+  ]);
+  const before = await db.customer.findUniqueOrThrow({ where: { email: "ada@example.com" }, select: { orders: { cursor: { id: expensive!.id }, take: -1, skip: 1, orderBy: { total: "asc" }, select: { total: true } } } });
+  assert.deepEqual(before.orders, [{ total: 3 }]);
+});

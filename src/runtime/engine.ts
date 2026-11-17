@@ -37,6 +37,8 @@ interface SelectOptions {
   allColumns?: boolean;
   /** Fields added to `distinct` (the relation key, so nested `distinct` works per parent). */
   distinctScope?: string[];
+  /** Apply `cursor` without paging (nested loads): rows from the cursor on ("after") or up to it ("before", negative take). */
+  nestedCursor?: "after" | "before";
 }
 
 interface OrderSpec {
@@ -57,6 +59,10 @@ function sortSpec(v: unknown, key: string): { desc: boolean; nulls?: "first" | "
   if (spec.sort !== "asc" && spec.sort !== "desc") throw new ValidationError(`orderBy.${key} must be 'asc' or 'desc'`);
   if (spec.nulls !== undefined && spec.nulls !== "first" && spec.nulls !== "last") throw new ValidationError(`orderBy.${key}.nulls must be 'first' or 'last'`);
   return { desc: spec.sort === "desc", ...(spec.nulls ? { nulls: spec.nulls as "first" | "last" } : {}) };
+}
+
+function reverseItem(o: OrderItem): OrderItem {
+  return { ...o, desc: !o.desc, ...(o.nulls ? { nulls: o.nulls === "first" ? "last" : "first" } : {}) };
 }
 
 function columnOrder(f: ColumnFieldDef, alias: string, desc = false): OrderItem {
@@ -338,13 +344,16 @@ export class Engine {
 
     let order = this.orderItems(model, args.orderBy, alias, ctx);
     const requestedOrder = [...order];
-    const needsStableOrder = paging && (take !== undefined || skip !== undefined || args.cursor !== undefined);
+    // Nested relation loads page in memory per parent, but still need a deterministic order and the cursor condition.
+    const pages = take !== undefined || skip !== undefined || args.cursor !== undefined || (!paging && (args.take !== undefined || args.skip !== undefined));
+    const applyCursor = args.cursor !== undefined && (paging || options.nestedCursor !== undefined);
+    const needsStableOrder = pages || applyCursor;
     // After `distinct` the distinct fields identify a row, so they make the order total; otherwise the primary key does.
     const tieBreakers = distinct.length ? distinct : (model.primaryKey?.fields ?? []).map((pk) => this.column(model, pk));
     if (needsStableOrder) {
       for (const f of tieBreakers) if (!order.some((o) => o.field?.name === f.name)) order.push(columnOrder(f, alias));
     }
-    if (reverse) order = order.map((o) => ({ ...o, desc: !o.desc, ...(o.nulls ? { nulls: o.nulls === "first" ? "last" : "first" } : {}) }));
+    if (reverse) order = order.map(reverseItem);
 
     const conds: string[] = [];
     const where = buildWhere(this, model, args.where, alias, ctx);
@@ -367,7 +376,11 @@ export class Engine {
         conds.push(`${alias}."__rn" = 1`);
       }
     } else if (where) conds.push(where);
-    if (args.cursor !== undefined && paging) conds.push(this.cursorCondition(model, args.cursor, order, ctx));
+    if (applyCursor) {
+      // A nested negative `take` keeps rows up to the cursor; the rows stay in the requested order for slicing.
+      const cursorOrder = options.nestedCursor === "before" ? order.map(reverseItem) : order;
+      conds.push(this.cursorCondition(model, args.cursor, cursorOrder, ctx));
+    }
 
     let sql = `SELECT ${selectDistinct ? "DISTINCT " : ""}${cols.join(", ")} FROM ${from}`;
     if (conds.length) sql += ` WHERE ${conds.length === 1 ? conds[0] : conds.map((c) => `(${c})`).join(" AND ")}`;
@@ -429,7 +442,10 @@ export class Engine {
   /** Loads a relation for many parent rows with batched `IN` queries (no N+1). */
   private async loadRelation(model: ModelDef, parents: Row[], rel: RelationFieldDef, args: Args, q: Queryable): Promise<void> {
     const target = this.model(rel.model);
-    if (args.cursor !== undefined) throw new ValidationError(`'cursor' is not supported inside include/select of '${rel.name}'`);
+    if (args.cursor !== undefined && !rel.list) throw new ValidationError(`'cursor' is only allowed on list relations ('${rel.name}')`);
+    if (args.take !== undefined && (typeof args.take !== "number" || !Number.isInteger(args.take))) throw new ValidationError(`'take' must be an integer`);
+    // The cursor condition is value based, so one batched query applies it to every parent; take/skip are applied per parent below.
+    const nestedCursor = args.cursor === undefined ? undefined : (args.take as number) < 0 ? "before" : "after";
     const groups = new Map<string, unknown[]>();
     for (const p of parents) {
       const values = rel.localFields.map((f) => p[f]);
@@ -447,7 +463,7 @@ export class Engine {
           ? { [rel.targetFields[0]!]: { in: chunk.map((v) => v[0]) } }
           : { OR: chunk.map((v) => Object.fromEntries(rel.targetFields.map((f, j) => [f, v[j]]))) };
       const where = childArgs.where ? { AND: [childArgs.where, keyWhere] } : keyWhere;
-      const res = await this.readMany(target, { ...childArgs, where }, q, { paging: false, extraColumns: rel.targetFields, distinctScope: rel.targetFields });
+      const res = await this.readMany(target, { ...childArgs, where }, q, { paging: false, extraColumns: rel.targetFields, distinctScope: rel.targetFields, nestedCursor });
       hidden = res.hidden;
       for (const row of res.rows) {
         const key = keyString(rel.targetFields.map((f) => row[f]))!;
