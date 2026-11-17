@@ -146,6 +146,28 @@ Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `ag
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
 
+#### Transactions
+
+```ts
+// interactive: everything in the callback runs on one connection
+await db.$transaction(async (tx) => { /* ... */ }, { timeout: 10_000, maxWait: 5_000, isolationLevel: "SERIALIZABLE" });
+
+// batch: the queries run in order in one transaction; pass them without `await`
+const [post, count] = await db.$transaction([
+  db.post.create({ data: { title: "Hello", authorId: 1 } }),
+  db.post.count(),
+]);
+```
+
+- `timeout` (default 5000 ms) limits how long the transaction runs once it has a connection.
+  When it is exceeded, `$transaction` rejects with `TransactionError` (`code: "TRANSACTION_TIMEOUT"`),
+  further queries of the transaction fail, and the transaction is rolled back and its connection
+  returned to the pool once the running statement has finished. `timeout: 0` disables it.
+- `maxWait` (default 2000 ms) limits the wait for a free pooled connection (`TRANSACTION_MAX_WAIT`).
+- Client-wide defaults: `new HanaClient({ transactionOptions: { timeout: 10_000 } })`.
+- Model and raw query methods are lazy: they run when awaited, so an un-awaited
+  `db.user.create(...)` does nothing.
+
 ### Migrations
 
 ```sh

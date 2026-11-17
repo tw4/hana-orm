@@ -2,12 +2,114 @@ import type { Contract, ModelDef } from "../schema/contract.ts";
 import { clientContract } from "../schema/contract.ts";
 import { formatTimestamp } from "./codec.ts";
 import { resolveConnectionConfig, resolveDefaultSchema } from "./config.ts";
-import type { Driver, QueryEvent, Queryable, TransactionOptions } from "./driver.ts";
+import type { Driver, IsolationLevel, QueryEvent, Queryable } from "./driver.ts";
 import { Engine } from "./engine.ts";
-import { NotFoundError } from "./errors.ts";
+import { NotFoundError, TransactionError, ValidationError } from "./errors.ts";
 import { HanaDriver, type ConnectionConfig } from "./hana-driver.ts";
 
 export type LogOption = boolean | "query" | ((event: QueryEvent) => void);
+
+/** Options of `$transaction`; client-wide defaults go into `ClientOptions.transactionOptions`. */
+export interface TransactionOptions {
+  isolationLevel?: IsolationLevel;
+  /**
+   * Milliseconds the transaction may run once it has a connection (default 5000). When it
+   * runs longer, `$transaction` rejects with `TransactionError` (`TRANSACTION_TIMEOUT`), later
+   * queries of the transaction fail, and the transaction is rolled back and its connection
+   * released as soon as the statement that is running has finished. `0` or `Infinity`
+   * disables the limit.
+   */
+  timeout?: number;
+  /** Milliseconds to wait for a free pooled connection (default 2000); `Infinity` waits. */
+  maxWait?: number;
+}
+
+export const DEFAULT_TRANSACTION_TIMEOUT = 5000;
+export const DEFAULT_TRANSACTION_MAX_WAIT = 2000;
+
+/**
+ * Result of a model or raw query method. It runs when it is awaited (or `then` is called),
+ * so it can also be handed to `$transaction([...])` to run inside one transaction.
+ */
+export class QueryPromise<T> implements Promise<T> {
+  readonly [Symbol.toStringTag] = "QueryPromise";
+  #run: (client: BaseClient | undefined) => PromiseLike<T>;
+  #started: Promise<T> | undefined;
+
+  /** @internal */
+  constructor(run: (client: BaseClient | undefined) => PromiseLike<T>) {
+    this.#run = run;
+  }
+
+  #start(): Promise<T> {
+    this.#started ??= Promise.resolve().then(() => this.#run(undefined));
+    return this.#started;
+  }
+
+  /** @internal Runs the query on `client` (a transaction client). */
+  _runOn(client: BaseClient): Promise<T> {
+    if (this.#started) throw new ValidationError("A query passed to $transaction([...]) was already awaited; pass it without awaiting it.");
+    this.#started = Promise.resolve().then(() => this.#run(client));
+    return this.#started;
+  }
+
+  then<A = T, B = never>(onfulfilled?: ((value: T) => A | PromiseLike<A>) | null, onrejected?: ((reason: any) => B | PromiseLike<B>) | null): Promise<A | B> {
+    return this.#start().then(onfulfilled, onrejected);
+  }
+
+  catch<B = never>(onrejected?: ((reason: any) => B | PromiseLike<B>) | null): Promise<T | B> {
+    return this.#start().catch(onrejected);
+  }
+
+  finally(onfinally?: (() => void) | null): Promise<T> {
+    return this.#start().finally(onfinally);
+  }
+}
+
+/**
+ * The connection of one `$transaction` as its queries see it: it refuses new statements once
+ * the transaction has ended or timed out, and tracks running statements so the rollback
+ * waits for them.
+ */
+class TransactionScope implements Queryable {
+  #q: Queryable;
+  #closed: TransactionError | undefined;
+  #running = new Set<Promise<unknown>>();
+
+  constructor(q: Queryable) {
+    this.#q = q;
+  }
+
+  #track<T>(run: () => Promise<T>): Promise<T> {
+    if (this.#closed) return Promise.reject(this.#closed);
+    const p = run();
+    this.#running.add(p);
+    const done = (): void => void this.#running.delete(p);
+    p.then(done, done);
+    return p;
+  }
+
+  query<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): Promise<T[]> {
+    return this.#track(() => this.#q.query<T>(sql, params));
+  }
+
+  execute(sql: string, params?: readonly unknown[]): Promise<number> {
+    return this.#track(() => this.#q.execute(sql, params));
+  }
+
+  executeBatch(sql: string, rows: readonly (readonly unknown[])[]): Promise<number> {
+    return this.#track(() => this.#q.executeBatch(sql, rows));
+  }
+
+  close(reason: TransactionError): void {
+    this.#closed ??= reason;
+  }
+
+  /** Waits until no statement is running. */
+  async settle(): Promise<void> {
+    while (this.#running.size) await Promise.allSettled([...this.#running]);
+  }
+}
 
 export interface ClientOptions {
   /** Overrides connection settings from the schema's datasource block / env vars. */
@@ -22,6 +124,8 @@ export interface ClientOptions {
   log?: LogOption;
   /** Fields left out of every result unless a query asks for them: `{ user: { passwordHash: true } }`. */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+  /** Defaults for every `$transaction` (`timeout`, `maxWait`, `isolationLevel`). */
+  transactionOptions?: TransactionOptions;
 }
 
 export const OPERATIONS = [
@@ -136,7 +240,9 @@ export class BaseClient {
           call = (args: any) => hook({ model: model.name, operation: op, args, query: next });
         }
       }
-      delegate[op] = (args?: any) => call(args ?? {});
+      // Lazy: runs when awaited, or inside $transaction([...]) on the transaction client.
+      delegate[op] = (args?: any) =>
+        new QueryPromise((client) => (client ? (client as unknown as Record<string, Record<string, AnyFn>>)[key]![op]!(args) : call(args ?? {})));
     }
     for (const ext of this._extensions) {
       for (const [name, fn] of Object.entries({ ...ext.model?.$allModels, ...ext.model?.[key] })) delegate[name] = fn.bind(delegate);
@@ -199,10 +305,67 @@ export class BaseClient {
     this._shared.driver = undefined;
   }
 
-  /** Runs `fn` in one transaction. Throwing rolls everything back. Nested calls reuse the outer transaction. */
-  $transaction<R>(fn: (tx: this) => Promise<R>, options?: TransactionOptions): Promise<R> {
-    if (this._tx) return fn(this);
-    return this._driver().transaction((q) => fn(this._clone({ tx: q })), options);
+  /**
+   * Runs `fn` in one transaction, or runs the given queries in order in one transaction and
+   * resolves with their results. Throwing (or a failing query) rolls everything back. Nested
+   * calls reuse the outer transaction (and its timeout).
+   */
+  $transaction<R>(fn: (tx: this) => Promise<R>, options?: TransactionOptions): Promise<R>;
+  $transaction<const P extends readonly PromiseLike<unknown>[]>(queries: P, options?: TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;
+  $transaction(arg: ((tx: this) => Promise<unknown>) | readonly PromiseLike<unknown>[], options?: TransactionOptions): Promise<unknown> {
+    let body: (tx: this) => Promise<unknown>;
+    if (Array.isArray(arg)) {
+      const queries = arg as readonly PromiseLike<unknown>[];
+      const bad = queries.findIndex((q) => !(q instanceof QueryPromise));
+      if (bad >= 0) return Promise.reject(new ValidationError(`$transaction([...]) expects queries of this client; item ${bad} is not one (pass db.model.method(...) or a raw query without awaiting it).`));
+      body = async (tx) => {
+        const results: unknown[] = [];
+        for (const q of queries as readonly QueryPromise<unknown>[]) results.push(await q._runOn(tx));
+        return results;
+      };
+    } else if (typeof arg === "function") body = arg;
+    else return Promise.reject(new ValidationError("$transaction expects a function or an array of queries."));
+
+    if (this._tx) return body(this);
+    const opts = { ...this._shared.options.transactionOptions, ...options };
+    const timeout = opts.timeout ?? DEFAULT_TRANSACTION_TIMEOUT;
+    const maxWait = opts.maxWait ?? DEFAULT_TRANSACTION_MAX_WAIT;
+    const limited = timeout > 0 && Number.isFinite(timeout);
+
+    let rejectTimeout: (e: TransactionError) => void = () => {};
+    const timedOut = new Promise<never>((_, reject) => (rejectTimeout = reject));
+    const run = this._driver().transaction(
+      async (q) => {
+        const scope = new TransactionScope(q);
+        let expired: TransactionError | undefined;
+        const timer = limited
+          ? setTimeout(() => {
+              expired = new TransactionError("TRANSACTION_TIMEOUT", `Transaction timed out after ${timeout} ms and was rolled back.`);
+              scope.close(expired);
+              rejectTimeout(expired);
+            }, timeout)
+          : undefined;
+        try {
+          const result = await body(this._clone({ tx: scope }));
+          await scope.settle();
+          // a callback that finished after the timeout must not commit
+          if (expired) throw expired;
+          return result;
+        } catch (e) {
+          await scope.settle();
+          throw expired ?? e;
+        } finally {
+          clearTimeout(timer);
+          scope.close(new TransactionError("TRANSACTION_CLOSED", "This transaction has already finished; run the query on the client or in a new $transaction."));
+        }
+      },
+      { ...(opts.isolationLevel ? { isolationLevel: opts.isolationLevel } : {}), ...(Number.isFinite(maxWait) ? { maxWait } : {}) },
+    );
+    if (!limited) return run;
+    // Reject at the timeout without waiting for a running statement; the rollback follows.
+    run.catch(() => {});
+    timedOut.catch(() => {});
+    return Promise.race([run, timedOut]);
   }
 
   /** Raw SELECT as a tagged template; values are bound as parameters. Rows are returned as the driver gives them. */
@@ -217,12 +380,12 @@ export class BaseClient {
 
   /** Raw SELECT with `?` placeholders. Never build `sql` from user input. */
   $queryRawUnsafe<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]> {
-    return this._run(false, (q) => q.query<T>(sql, params.map(rawParam)));
+    return new QueryPromise((client) => (client ? client.$queryRawUnsafe<T>(sql, ...params) : this._run(false, (q) => q.query<T>(sql, params.map(rawParam)))));
   }
 
   /** Raw DML/DDL with `?` placeholders. Never build `sql` from user input. */
   $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number> {
-    return this._run(false, (q) => q.execute(sql, params.map(rawParam)));
+    return new QueryPromise((client) => (client ? client.$executeRawUnsafe(sql, ...params) : this._run(false, (q) => q.execute(sql, params.map(rawParam)))));
   }
 
   /** Returns a new client with the extension applied; the original is unchanged. */

@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import type { Driver, QueryEvent, Queryable, TransactionOptions } from "./driver.ts";
-import { DatabaseError } from "./errors.ts";
+import { DatabaseError, TransactionError } from "./errors.ts";
 
 export interface ConnectionConfig {
   host: string;
@@ -22,6 +22,8 @@ export interface HanaDriverOptions {
   /** Maximum open connections (default 10). */
   poolSize?: number;
   onQuery?: (e: QueryEvent) => void;
+  /** @internal Replaces `@sap/hana-client` (tests). */
+  hanaModule?: unknown;
 }
 
 // Minimal shape of @sap/hana-client we rely on.
@@ -38,7 +40,7 @@ interface HanaConnection {
   rollback(cb: (err: Error | null) => void): void;
   disconnect(cb: (err: Error | null) => void): void;
 }
-interface HanaModule {
+export interface HanaModule {
   createConnection(): HanaConnection;
 }
 
@@ -122,6 +124,7 @@ export class HanaDriver implements Driver {
   private readonly onQuery: ((e: QueryEvent) => void) | undefined;
   private readonly idle: ConnectionQueryable[] = [];
   private readonly waiters: ((c: ConnectionQueryable) => void)[] = [];
+  private readonly hana: HanaModule | undefined;
   private open = 0;
   private closed = false;
 
@@ -129,10 +132,11 @@ export class HanaDriver implements Driver {
     this.config = config;
     this.poolSize = Math.max(1, options.poolSize ?? 10);
     this.onQuery = options.onQuery;
+    this.hana = options.hanaModule as HanaModule | undefined;
   }
 
   private async connectOne(): Promise<ConnectionQueryable> {
-    const hana = loadHana();
+    const hana = this.hana ?? loadHana();
     const conn = hana.createConnection();
     const c = this.config;
     const options: Record<string, unknown> = {
@@ -153,7 +157,8 @@ export class HanaDriver implements Driver {
     return new ConnectionQueryable(conn, this.onQuery);
   }
 
-  private async acquire(): Promise<ConnectionQueryable> {
+  /** Takes an idle connection, opens a new one, or waits for one (at most `maxWait` ms). */
+  private async acquire(maxWait?: number): Promise<ConnectionQueryable> {
     if (this.closed) throw new Error("The client has been disconnected");
     const idle = this.idle.pop();
     if (idle) return idle;
@@ -166,7 +171,21 @@ export class HanaDriver implements Driver {
         throw e;
       }
     }
-    return new Promise((resolve) => this.waiters.push(resolve));
+    return new Promise((resolve, reject) => {
+      let timer: NodeJS.Timeout | undefined;
+      const waiter = (c: ConnectionQueryable): void => {
+        clearTimeout(timer);
+        resolve(c);
+      };
+      this.waiters.push(waiter);
+      if (maxWait !== undefined && Number.isFinite(maxWait)) {
+        timer = setTimeout(() => {
+          const i = this.waiters.indexOf(waiter);
+          if (i >= 0) this.waiters.splice(i, 1);
+          reject(new TransactionError("TRANSACTION_MAX_WAIT", `No connection was free within maxWait (${maxWait} ms); all ${this.poolSize} pooled connections are in use.`));
+        }, Math.max(0, maxWait));
+      }
+    });
   }
 
   private release(c: ConnectionQueryable, broken = false): void {
@@ -180,8 +199,8 @@ export class HanaDriver implements Driver {
     else this.idle.push(c);
   }
 
-  private async withConnection<T>(fn: (c: ConnectionQueryable) => Promise<T>): Promise<T> {
-    const c = await this.acquire();
+  private async withConnection<T>(fn: (c: ConnectionQueryable) => Promise<T>, maxWait?: number): Promise<T> {
+    const c = await this.acquire(maxWait);
     let broken = false;
     try {
       return await fn(c);
@@ -221,7 +240,7 @@ export class HanaDriver implements Driver {
         if (options.transactionalDdl) await c.execute("SET TRANSACTION AUTOCOMMIT DDL ON").catch(() => {});
         c.conn.setAutoCommit(true);
       }
-    });
+    }, options.maxWait);
   }
 
   async close(): Promise<void> {
