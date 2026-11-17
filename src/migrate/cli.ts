@@ -16,6 +16,7 @@ import {
 } from "./commands.ts";
 import { dbSeed } from "./seed.ts";
 import { migrateReset } from "./reset.ts";
+import { dbExecute, migrateDiff } from "./diff-command.ts";
 
 export const DB_MIGRATE_HELP = `Database commands:
   db pull [--tables A,B] [--exclude X] [--db-schema S] [--views] [--print]
@@ -28,6 +29,10 @@ export const DB_MIGRATE_HELP = `Database commands:
   db seed                     Run the seed command with the .env loaded. Configure it as
                               seed = "node ./seed.ts" in the generator block, or as
                               "hana-orm": { "seed": "..." } in package.json.
+  db execute --file <script.sql> | --stdin
+                              Run a SQL script with the configured connection. All statements
+                              run in one transaction (DDL included); nothing is committed when
+                              one fails.
 
 Migration commands:
   migrate plan --name <name> [--allow-destructive] [--empty] [--script]
@@ -46,6 +51,12 @@ Migration commands:
                               Create the first migration from the schema and record it as
                               applied without running it (for existing databases).
   migrate unlock              Release a stale migration lock.
+  migrate diff --from <source> --to <source> [--script] [--exit-code]
+                              Show the changes that turn one state into another. A source is
+                              empty, schema, migrations (the latest migration), migrations:<id>
+                              or db (the live database; only the tables the other side defines
+                              are compared). --script prints SQL; --exit-code exits with 2 when
+                              there are changes. A connection is needed only for db.
   migrate reset [--force] [--schema-drop] [--skip-seed] [--allow-remote]
                               Development only: drop the project's tables (every table of every
                               migration and the schema, plus the _HANA_ORM_* tables), re-apply all
@@ -58,7 +69,7 @@ Migration commands:
 type Command = (args: ParsedArgs, ctx: CliContext) => Promise<number>;
 
 const COMMANDS: Record<"db" | "migrate", Record<string, Command>> = {
-  db: { pull: dbPull, push: dbPush, sign: dbSign, verify: dbVerify, seed: dbSeed },
+  db: { pull: dbPull, push: dbPush, sign: dbSign, verify: dbVerify, seed: dbSeed, execute: (a, c) => dbExecute(a, c) },
   migrate: {
     plan: (a, c) => migratePlan(a, c),
     show: migrateShow,
@@ -68,6 +79,7 @@ const COMMANDS: Record<"db" | "migrate", Record<string, Command>> = {
     baseline: (a, c) => migrateBaseline(a, c),
     unlock: migrateUnlock,
     reset: migrateReset,
+    diff: migrateDiff,
   },
 };
 
