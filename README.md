@@ -138,13 +138,32 @@ const rows = await db.$queryRaw`SELECT COUNT(*) AS "n" FROM "APP"."USERS" WHERE 
 ```
 
 Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `aggregate`, `groupBy`,
-`create`, `createMany`, `update`, `updateMany`, `upsert`, `delete`, `deleteMany`; filters
+`create`, `createMany`, `createManyAndReturn`, `update`, `updateMany`, `upsert`, `delete`, `deleteMany`; filters
 (`equals`, `not`, `in`, `notIn`, `lt/lte/gt/gte`, `contains/startsWith/endsWith`, `mode: "insensitive"`,
 `AND/OR/NOT`, relation filters `some/every/none/is/isNot`); nested writes (`create`, `createMany`,
 `connect`, `connectOrCreate`, `disconnect`, `set`, `update`, `updateMany`, `upsert`, `delete`,
 `deleteMany`); cursor pagination; `_count`; `$extends` (model methods and query hooks).
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
+
+#### Bulk inserts
+
+```ts
+// skip rows that match an existing row (or an earlier row of the batch) on the primary key or any unique
+const { count } = await db.user.createMany({ data: users, skipDuplicates: true });
+
+// insert and read the rows back (with identity values), in the order of `data`
+const created = await db.user.createManyAndReturn({ data: users, skipDuplicates: true, select: { id: true, email: true } });
+```
+
+- `skipDuplicates` turns each insert into `INSERT ... SELECT ... FROM DUMMY WHERE NOT EXISTS (...)`,
+  checking the primary key and every unique whose fields are set in the row. Duplicates are
+  checked when the row is inserted; two transactions inserting the same key at the same time can
+  still fail with a unique violation.
+- `createManyAndReturn` inserts row by row (to read identity values) and returns only the rows it
+  inserted. It accepts `select`, `omit` and `include`, but no nested writes in `data`.
+- Nested `createMany` accepts `skipDuplicates` too.
+
 
 #### Transactions
 

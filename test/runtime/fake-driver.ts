@@ -12,6 +12,8 @@ export class FakeDriver implements Driver {
   transactions = 0;
   rolledBack = 0;
   respond: (sql: string, params: unknown[]) => unknown = () => [];
+  /** Affected-row count of a batch; defaults to one per row. */
+  batchCount: (sql: string, rows: readonly (readonly unknown[])[]) => number = (_sql, rows) => rows.length;
 
   private q(tx: boolean): Queryable {
     return {
@@ -27,7 +29,7 @@ export class FakeDriver implements Driver {
       },
       executeBatch: async (sql: string, rows: readonly (readonly unknown[])[]) => {
         for (const p of rows) this.calls.push({ sql, params: [...p], tx });
-        return rows.length;
+        return this.batchCount(sql, rows);
       },
     };
   }

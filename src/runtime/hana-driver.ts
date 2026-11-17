@@ -104,7 +104,8 @@ class ConnectionQueryable implements Queryable {
       const stmt = await promisify<HanaStatement>((cb) => this.conn.prepare(sql, cb as (err: Error | null, s: unknown) => void));
       try {
         const r = await promisify<number | number[] | undefined>((cb) => stmt.execBatch(rows, cb as (err: Error | null, r: unknown) => void));
-        if (Array.isArray(r)) return r.reduce((a, b) => a + (b > 0 ? b : 1), 0);
+        // Per-row counts: a negative value means "succeeded, count unknown"; 0 means no row was written.
+        if (Array.isArray(r)) return r.reduce((a, b) => a + (b >= 0 ? b : 1), 0);
         return typeof r === "number" ? r : rows.length;
       } finally {
         await promisify<void>((cb) => stmt.drop(cb)).catch(() => {});

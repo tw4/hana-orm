@@ -1,0 +1,25 @@
+// Integration test schema with real primary key and unique constraints. Used by tests that
+// need constraint behaviour (temporary tables cannot have constraints). The tables are
+// created in a dedicated, throwaway schema and only when HANA_ORM_ALLOW_DDL=1.
+
+model Member {
+  id      Int     @id @default(autoincrement())
+  email   String  @unique @db.NVarChar(200)
+  name    String? @db.NVarChar(100)
+  team    String  @db.NVarChar(40)
+  seat    Int
+  credit  Decimal @default("0") @db.Decimal(15, 2)
+  badges  Badge[]
+
+  @@unique([team, seat])
+  @@map("MEMBERS")
+}
+
+model Badge {
+  code     String @id @db.NVarChar(20)
+  label    String @db.NVarChar(100)
+  memberId Int    @map("MEMBER_ID")
+  member   Member @relation(fields: [memberId], references: [id])
+
+  @@map("BADGES")
+}

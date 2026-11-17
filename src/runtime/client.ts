@@ -139,6 +139,7 @@ export const OPERATIONS = [
   "groupBy",
   "create",
   "createMany",
+  "createManyAndReturn",
   "update",
   "updateMany",
   "upsert",
@@ -147,7 +148,7 @@ export const OPERATIONS = [
 ] as const;
 export type Operation = (typeof OPERATIONS)[number];
 
-const WRITES = new Set<Operation>(["create", "createMany", "update", "updateMany", "upsert", "delete", "deleteMany"]);
+const WRITES = new Set<Operation>(["create", "createMany", "createManyAndReturn", "update", "updateMany", "upsert", "delete", "deleteMany"]);
 
 type AnyFn = (...args: any[]) => any;
 
