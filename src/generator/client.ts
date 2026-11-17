@@ -173,7 +173,19 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   L.push(`  _count?: true | { _all?: true; ${all} }; _sum?: { ${numeric} }; _avg?: { ${numeric} }; _min?: { ${all} }; _max?: { ${all} };`);
   L.push("};");
   L.push(`export type ${M}ScalarField = ${cols.map((f) => `"${f.name}"`).join(" | ") || "never"};`);
-  L.push(`export type ${M}GroupByArgs = Omit<${M}AggregateArgs, "cursor"> & { by: ${M}ScalarField | ${M}ScalarField[] };`, "");
+  const numericCols = cols.filter(isNumeric);
+  const countFilter = `number | $r.Filter<number>`;
+  L.push(`/** groupBy \`having\`: filters on \`by\` fields and on aggregates of each group. */`);
+  L.push(`export type ${M}HavingInput = {`);
+  L.push(`  AND?: ${M}HavingInput | ${M}HavingInput[];`, `  OR?: ${M}HavingInput[];`, `  NOT?: ${M}HavingInput | ${M}HavingInput[];`);
+  for (const f of cols) L.push(`  ${f.name}?: ${filterType(contract, f)};`);
+  L.push(`  _count?: { _all?: ${countFilter}; ${cols.map((f) => `${f.name}?: ${countFilter}`).join("; ")} };`);
+  L.push(`  _sum?: { ${numericCols.map((f) => `${f.name}?: ${filterType(contract, { ...f, optional: true })}`).join("; ")} };`);
+  L.push(`  _avg?: { ${numericCols.map((f) => `${f.name}?: number | null | $r.NullableFilter<number>`).join("; ")} };`);
+  L.push(`  _min?: { ${cols.map((f) => `${f.name}?: ${filterType(contract, { ...f, optional: true })}`).join("; ")} };`);
+  L.push(`  _max?: { ${cols.map((f) => `${f.name}?: ${filterType(contract, { ...f, optional: true })}`).join("; ")} };`);
+  L.push("};");
+  L.push(`export type ${M}GroupByArgs = Omit<${M}AggregateArgs, "cursor"> & { by: ${M}ScalarField | ${M}ScalarField[]; having?: ${M}HavingInput };`, "");
 
   // create / update inputs
   if (!readOnly || m.kind !== "view") {

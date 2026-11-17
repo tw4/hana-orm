@@ -73,3 +73,44 @@ test("omit validation", async () => {
   await assert.rejects(db.tag.findMany({ omit: { name: true } }), /leaves no fields/);
   assert.throws(() => new HanaClient({ driver: new FakeDriver(), omit: { nope: { x: true } } as never }), ValidationError);
 });
+
+// ---------------------------------------------------------------------------
+// groupBy having (#1)
+// ---------------------------------------------------------------------------
+
+test("groupBy having filters on aggregates with bound parameters", async () => {
+  const { driver, db } = setup();
+  await db.user.groupBy({
+    by: ["role"],
+    where: { active: true },
+    _count: { _all: true },
+    having: { role: { not: "ADMIN" }, _count: { _all: { gt: 2 } }, _sum: { visits: { gte: 100n } }, _avg: { balance: { lt: 9.5 } } },
+    orderBy: { role: "asc" },
+  });
+  const { sql, params } = driver.calls[0]!;
+  assert.equal(
+    sql,
+    `SELECT t0."role" AS "role", COUNT(*) AS "_count._all" FROM "APP"."USERS" t0 WHERE t0."active" = ? GROUP BY t0."role" HAVING (t0."role" <> ?) AND (COUNT(*) > ?) AND (SUM(t0."visits") >= ?) AND (AVG(t0."balance") < ?) ORDER BY t0."role" ASC`,
+  );
+  assert.deepEqual(params, [true, "admin", 2, "100", 9.5]);
+});
+
+test("groupBy having supports OR / NOT, field counts and min/max", async () => {
+  const { driver, db } = setup();
+  await db.post.groupBy({
+    by: ["authorId"],
+    having: { OR: [{ _count: { id: 1 } }, { _max: { title: { startsWith: "a" } } }], NOT: { authorId: null } },
+  });
+  assert.match(
+    driver.calls[0]!.sql,
+    / HAVING \(\(\(COUNT\(t0\."id"\) = \?\) OR \(MAX\(t0\."title"\) LIKE \? ESCAPE '\\'\)\)\) AND \(NOT \(\(t0\."authorId" IS NULL\)\)\)$/,
+  );
+  assert.deepEqual(driver.calls[0]!.params, [1, "a%"]);
+});
+
+test("groupBy having validation", async () => {
+  const { db } = setup();
+  await assert.rejects(db.post.groupBy({ by: ["authorId"], having: { title: "x" } }), /must be one of the 'by' fields or use an aggregate/);
+  await assert.rejects(db.post.groupBy({ by: ["authorId"], having: { _sum: { title: { gt: 1 } } } as never }), /needs numeric fields/);
+  await assert.rejects(db.post.groupBy({ by: ["authorId"], having: { _count: { _all: { gt: "x" } } } as never }), /expects an integer/);
+});
