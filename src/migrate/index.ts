@@ -18,6 +18,8 @@ export type { LiveComparison } from "./drift.ts";
 export { splitSqlStatements } from "./sql-split.ts";
 export { EMPTY_CONTRACT_HASH, planBetween } from "./commands.ts";
 export { DB_MIGRATE_HELP, runDbOrMigrateCommand } from "./cli.ts";
+export { dbSeed, resolveSeedCommand, runSeed, runShellCommand } from "./seed.ts";
+export type { SeedCommand } from "./seed.ts";
 export { introspect, buildPhysicalFromCatalog, readCatalog, catalogType, currentSchema, CATALOG_SQL } from "../introspect/catalog.ts";
 export type { CatalogRows, IntrospectOptions } from "../introspect/catalog.ts";
 export { renderSchema, mapHanaType } from "../introspect/render.ts";
