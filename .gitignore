@@ -1,4 +1,30 @@
+# dependencies and build output
 node_modules/
 dist/
+coverage/
+*.tsbuildinfo
+
+# secrets and local configuration: never commit
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# local data, dumps and generated clients
 *.log
+*.sqlite
+*.dump
+*.hdbbackup
+local/
+scratch/
+generated/
+
+# editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

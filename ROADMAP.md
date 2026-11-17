@@ -18,8 +18,10 @@ and Prisma 7 users have run into.
    that can be reviewed, plus pre-checks and post-checks.
 5. **HANA-native, not lowest-common-denominator.** Column tables, schemas, identity
    columns, `NVARCHAR` limits, MDC tenant databases and HANA type quirks are first-class.
-6. **Safe on existing databases.** Large existing schemas (for example OpenText Content
-   Server) can be introspected and baselined without touching data.
+6. **Safe on existing databases.** Large existing schemas with hundreds of tables can be
+   introspected and baselined without touching data.
+7. **No private data in the repository.** Connection details come only from the
+   environment; tests, fixtures and examples use synthetic schemas and data.
 
 ## What we take from Prisma 8
 
@@ -75,6 +77,8 @@ Package layout (single package first, split later if needed):
   logging, connection config from `.env` (`HANA_HOST`, `HANA_PORT`, `HANA_USER`, …) or URL.
 - Integration test harness: local temporary tables (`#TABLE`), or a dedicated test schema,
   so tests never write to production tables.
+- Open source hygiene: MIT license, contributing and security guides, secret scanning in
+  CI, `.env` never committed, no real host names, users or business data in fixtures.
 
 ### M1 – Schema language and contract
 - Prisma-like syntax: `datasource`, `generator`, `model`, `enum`, `@id`, `@@id`, `@unique`,
@@ -138,8 +142,8 @@ Package layout (single package first, split later if needed):
 ### M6 – Developer experience
 - `hana-orm init` scaffolds `schema.hana`, `.env.example` and a client file.
 - `generate --watch`.
-- Documentation site and examples, including an OpenText Content Server (OTCS)
-  read-only example.
+- Documentation site and examples, including a read-only example on a large existing
+  schema.
 - Editor syntax highlighting for `.hana` files.
 
 ### M7 – Hardening and release
