@@ -248,13 +248,14 @@ test("migrate reset drops the project's tables, re-applies migrations and seeds"
   writeFileSync(seedScript, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(join(dir, "seeded.txt"))}, process.env.HANA_ORM_SCHEMA ?? "");\n`);
   writeFileSync(join(dir, "package.json"), JSON.stringify({ "hana-orm": { seed: `"${process.execPath}" "${seedScript}"` } }));
 
-  assert.equal(await cli("migrate", "reset"), 1, "refuses without --force when it cannot ask");
+  assert.equal(await cli("migrate", "reset", "--allow-remote"), 1, "refuses without --force when it cannot ask");
   assert.equal((await admin.query(`SELECT 1 FROM "${schemaName}"."ACCOUNTS"`)).length, 1, "nothing was dropped");
 
+  // --allow-remote: the test database may run on another machine (HANA_ORM_ALLOW_DDL=1 opts in)
   // the earlier "move_audit" migration moves a table into this schema and back
   await admin.execute(`CREATE SCHEMA "${schemaName}_ARCH"`);
   try {
-    assert.equal(await cli("migrate", "reset", "--force"), 0);
+    assert.equal(await cli("migrate", "reset", "--force", "--allow-remote"), 0);
   } finally {
     await admin.execute(`DROP SCHEMA "${schemaName}_ARCH" CASCADE`).catch(() => {});
   }
