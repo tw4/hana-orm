@@ -19,6 +19,8 @@ export interface ClientOptions {
   poolSize?: number;
   /** `true`/"query" prints each SQL statement with its duration; a function receives the events. */
   log?: LogOption;
+  /** Fields left out of every result unless a query asks for them: `{ user: { passwordHash: true } }`. */
+  omit?: Record<string, Record<string, boolean | undefined> | undefined>;
 }
 
 export const OPERATIONS = [
@@ -81,12 +83,14 @@ export class BaseClient {
     this._tx = undefined;
     this._extensions = [];
     this._install();
+    // Validate the client-wide omit config up front instead of on the first query.
+    if (options.omit) this._engine();
   }
 
   /** @internal */
   _engine(): Engine {
     const s = this._shared;
-    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource));
+    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), { omit: s.options.omit });
     return s.engine;
   }
 

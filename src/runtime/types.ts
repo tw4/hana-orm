@@ -73,6 +73,18 @@ export type Simplify<T> = { [K in keyof T]: T[K] } & {};
 /** Keys of `S` whose value is selected (not false/undefined/null). */
 export type SelectedKeys<S> = { [K in keyof S]-?: Truthy<S[K]> extends true ? K : never }[keyof S];
 
+type TrueKeys<T> = T extends object ? { [K in keyof T]-?: T[K] extends true ? K : never }[keyof T] : never;
+type FalseKeys<T> = T extends object ? { [K in keyof T]-?: T[K] extends false ? K : never }[keyof T] : never;
+
+/** The client-wide omit config of one model (`G` is the client's `omit` option, `K` the delegate name). */
+export type ModelOmit<G, K extends string> = G extends { [P in K]?: infer O } ? (O extends object ? O : {}) : {};
+
+/** Keys removed by the query's `omit` (in `A`) on top of the model's client-wide omit `MO`; `false` in the query re-includes. */
+export type OmittedKeys<A, MO> = A extends { omit: infer O } ? TrueKeys<O> | Exclude<TrueKeys<MO>, FalseKeys<O>> : TrueKeys<MO>;
+
+/** Model type `M` without the omitted fields. */
+export type OmitFields<M, A, MO> = [OmittedKeys<A, MO>] extends [never] ? M : Simplify<Omit<M, OmittedKeys<A, MO>>>;
+
 /** Result of `_count: true | { select: {...} }` given the full set of countable relations. */
 export type CountPayload<V, All> = V extends { select: infer C }
   ? { [K in SelectedKeys<C> & keyof All]: number }

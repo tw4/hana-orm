@@ -141,3 +141,16 @@ test("delete returns the deleted row; deleteMany counts", { skip: !enabled }, as
   assert.equal(r.count, 2);
   assert.ok(queries.every((q) => !/'[^']*example\.com/.test(q)), "values must be bound, never inlined");
 });
+
+// Data from here on: customers ada (orders 12.5 OPEN, 3 DONE), bob (order 99 OPEN), cy, tx (no orders).
+
+test("omit leaves fields out of results", { skip: !enabled }, async () => {
+  const rows = await db.customer.findMany({
+    omit: { credit: true, points: true, createdAt: true },
+    include: { orders: { omit: { note: true }, orderBy: { id: "asc" } } },
+    orderBy: { email: "asc" },
+    take: 1,
+  });
+  assert.deepEqual(Object.keys(rows[0]!).sort(), ["email", "id", "name", "orders", "vip"]);
+  assert.deepEqual(Object.keys(rows[0]!.orders[0]!).sort(), ["customerId", "id", "status", "total"]);
+});

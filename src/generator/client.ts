@@ -82,7 +82,7 @@ function uniqueCombos(model: ModelDef): { key: string; fields: string[] }[] {
 }
 
 function relationPayload(r: RelationFieldDef, value: string): string {
-  const p = `${r.model}GetPayload<${value}>`;
+  const p = `${r.model}GetPayload<${value}, G>`;
   if (r.list) return `${p}[]`;
   return r.owner && !r.optional ? p : `${p} | null`;
 }
@@ -141,27 +141,30 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   for (const r of rels) L.push(`  ${r.name}?: boolean | ${r.list ? `${r.model}FindManyArgs` : `${r.model}DefaultArgs`};`);
   if (lists.length) L.push(`  _count?: boolean | { select?: ${countSelect} };`);
   L.push("};");
-  L.push(`export type ${M}DefaultArgs = { select?: ${M}Select | null; include?: ${M}Include | null };`, "");
+  L.push(`/** Fields to leave out of results (\`true\`), or to bring back when the client omits them by default (\`false\`). */`);
+  L.push(`export type ${M}Omit = { ${cols.map((f) => `${f.name}?: boolean`).join("; ")} };`);
+  L.push(`export type ${M}DefaultArgs = { select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null };`, "");
 
-  // payload
+  // payload (G is the client-wide omit config)
   const mapping = (src: string) => {
     const branches = rels.map((r) => `K extends "${r.name}" ? ${relationPayload(r, `${src}[K]`)}`);
     if (lists.length) branches.push(`K extends "_count" ? $r.CountPayload<${src}[K], ${M}CountOutput>`);
     branches.push(`K extends keyof ${M} ? ${M}[K]`);
     return `{ [K in $r.SelectedKeys<${src}>]: ${branches.join(" : ")} : never }`;
   };
-  L.push(`export type ${M}GetPayload<A> = A extends { select: infer S }`);
-  L.push(`  ? S extends object ? $r.Simplify<${mapping("S")}> : ${M}`);
+  const base = `$r.OmitFields<${M}, A, $r.ModelOmit<G, "${lowerFirst(M)}">>`;
+  L.push(`export type ${M}GetPayload<A, G = {}> = A extends { select: infer S }`);
+  L.push(`  ? S extends object ? $r.Simplify<${mapping("S")}> : ${base}`);
   L.push(`  : A extends { include: infer I }`);
-  L.push(`    ? I extends object ? $r.Simplify<${M} & ${mapping("I")}> : ${M}`);
-  L.push(`    : ${M};`, "");
+  L.push(`    ? I extends object ? $r.Simplify<${base} & ${mapping("I")}> : ${base}`);
+  L.push(`    : ${base};`, "");
 
   // args
   L.push(`export type ${M}FindManyArgs = {`);
-  L.push(`  where?: ${M}WhereInput;`, `  select?: ${M}Select | null;`, `  include?: ${M}Include | null;`);
+  L.push(`  where?: ${M}WhereInput;`, `  select?: ${M}Select | null;`, `  include?: ${M}Include | null;`, `  omit?: ${M}Omit | null;`);
   L.push(`  orderBy?: ${M}OrderByInput | ${M}OrderByInput[];`, `  cursor?: ${M}WhereUniqueInput;`, `  take?: number;`, `  skip?: number;`);
   L.push("};");
-  L.push(`export type ${M}FindUniqueArgs = { where: ${M}WhereUniqueInput; select?: ${M}Select | null; include?: ${M}Include | null };`);
+  L.push(`export type ${M}FindUniqueArgs = { where: ${M}WhereUniqueInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null };`);
   L.push(`export type ${M}CountArgs = { where?: ${M}WhereInput; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number; select?: { _all?: boolean } & { [K in keyof ${M}]?: boolean } };`);
   const numeric = cols.filter(isNumeric).map((f) => `${f.name}?: true`).join("; ");
   const all = cols.map((f) => `${f.name}?: true`).join("; ");
@@ -222,24 +225,25 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   }
 
   // delegate
-  L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate {`);
-  L.push(`  findMany<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A>[]>;`);
-  L.push(`  findFirst<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A> | null>;`);
-  L.push(`  findFirstOrThrow<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A>>;`);
-  L.push(`  findUnique<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A> | null>;`);
-  L.push(`  findUniqueOrThrow<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A>>;`);
+  L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate<G = {}> {`);
+  L.push(`  findMany<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>[]>;`);
+  L.push(`  findFirst<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G> | null>;`);
+  L.push(`  findFirstOrThrow<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>>;`);
+  L.push(`  findUnique<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G> | null>;`);
+  L.push(`  findUniqueOrThrow<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G>>;`);
   L.push(`  count<A extends ${M}CountArgs = {}>(args?: A): Promise<A extends { select: infer S } ? { [K in $r.SelectedKeys<S>]: number } : number>;`);
   L.push(`  aggregate<A extends ${M}AggregateArgs>(args: A): Promise<$r.AggregatePayload<${M}, A>>;`);
   L.push(`  groupBy<A extends ${M}GroupByArgs>(args: A): Promise<$r.GroupByPayload<${M}, A>[]>;`);
   if (m.kind !== "view") {
-    L.push(`  create<A extends { data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null }>(args: A): Promise<${M}GetPayload<A>>;`);
+    L.push(`  create<A extends { data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }>(args: A): Promise<${M}GetPayload<A, G>>;`);
     L.push(`  createMany(args: { data: ${M}CreateManyInput | ${M}CreateManyInput[] }): Promise<$r.BatchPayload>;`);
     L.push(`  updateMany(args: { where?: ${M}WhereInput; data: ${M}UpdateManyInput }): Promise<$r.BatchPayload>;`);
     L.push(`  deleteMany(args?: { where?: ${M}WhereInput }): Promise<$r.BatchPayload>;`);
     if (!readOnly) {
-      L.push(`  update<A extends { where: ${M}WhereUniqueInput; data: ${M}UpdateInput; select?: ${M}Select | null; include?: ${M}Include | null }>(args: A): Promise<${M}GetPayload<A>>;`);
-      L.push(`  upsert<A extends { where: ${M}WhereUniqueInput; create: ${M}CreateInput; update: ${M}UpdateInput; select?: ${M}Select | null; include?: ${M}Include | null }>(args: A): Promise<${M}GetPayload<A>>;`);
-      L.push(`  delete<A extends { where: ${M}WhereUniqueInput; select?: ${M}Select | null; include?: ${M}Include | null }>(args: A): Promise<${M}GetPayload<A>>;`);
+      const sel = `select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null`;
+      L.push(`  update<A extends { where: ${M}WhereUniqueInput; data: ${M}UpdateInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
+      L.push(`  upsert<A extends { where: ${M}WhereUniqueInput; create: ${M}CreateInput; update: ${M}UpdateInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
+      L.push(`  delete<A extends { where: ${M}WhereUniqueInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
     }
   }
   L.push("}", "");
@@ -264,27 +268,33 @@ export function generateClient(contract: Contract, options: GenerateOptions = {}
 
   for (const m of models) out.push(modelTypes(contract, m));
 
-  out.push(`export interface ${C}Transaction {`);
-  for (const m of models) out.push(`  readonly ${lowerFirst(m.name)}: ${m.name}Delegate;`);
+  out.push(`/** Client-wide \`omit\` option: fields left out of every result of a model unless a query asks for them. */`);
+  out.push(`export type ${C}OmitConfig = { ${models.map((m) => `${lowerFirst(m.name)}?: ${m.name}Omit`).join("; ")} };`);
+  out.push(`export interface ${C}Options extends $r.ClientOptions { omit?: ${C}OmitConfig }`, "");
+  out.push(`export interface ${C}Transaction<G = {}> {`);
+  for (const m of models) out.push(`  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G>;`);
   out.push(`  $queryRaw<T = Record<string, unknown>>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T[]>;`);
   out.push(`  $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number>;`);
   out.push(`  $queryRawUnsafe<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;`);
   out.push(`  $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number>;`);
   out.push("}", "");
-  out.push(`export interface ${C} extends ${C}Transaction {`);
+  out.push(`export interface ${C}<G = {}> extends ${C}Transaction<G> {`);
   out.push(`  $connect(): Promise<void>;`);
   out.push(`  $disconnect(): Promise<void>;`);
-  out.push(`  $transaction<R>(fn: (tx: ${C}Transaction) => Promise<R>, options?: $r.TransactionOptions): Promise<R>;`);
-  out.push(`  $extends<E extends $r.ExtensionArgs>(extension: E): Extended<${C}, E>;`);
+  out.push(`  $transaction<R>(fn: (tx: ${C}Transaction<G>) => Promise<R>, options?: $r.TransactionOptions): Promise<R>;`);
+  out.push(`  $extends<E extends $r.ExtensionArgs>(extension: E): Extended<${C}<G>, E, G>;`);
   out.push("}", "");
   out.push(`type ModelMethods<E, K extends string> = E extends { model: infer MM } ? (MM extends Record<string, unknown> ? (K extends keyof MM ? MM[K] : {}) & ("$allModels" extends keyof MM ? MM["$allModels"] : {}) : {}) : {};`);
   out.push(`type ClientMethods<E> = E extends { client: infer CM } ? CM : {};`);
   out.push(
-    `export type Extended<C, E> = Omit<C, ${models.map((m) => `"${lowerFirst(m.name)}"`).join(" | ") || "never"}> & ClientMethods<E> & {\n${models
-      .map((m) => `  readonly ${lowerFirst(m.name)}: ${m.name}Delegate & ModelMethods<E, "${lowerFirst(m.name)}">;`)
+    `export type Extended<C, E, G = {}> = Omit<C, ${models.map((m) => `"${lowerFirst(m.name)}"`).join(" | ") || "never"}> & ClientMethods<E> & {\n${models
+      .map((m) => `  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G> & ModelMethods<E, "${lowerFirst(m.name)}">;`)
       .join("\n")}\n};`,
     "",
   );
-  out.push(`export const ${C} = $r.createClientClass(contract) as unknown as { new (options?: $r.ClientOptions): ${C} };`, "");
+  out.push(
+    `export const ${C} = $r.createClientClass(contract) as unknown as { new <const G extends ${C}OmitConfig = {}>(options?: ${C}Options & { omit?: G }): ${C}<G> };`,
+    "",
+  );
   return out.join("\n");
 }
