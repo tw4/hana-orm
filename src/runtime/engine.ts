@@ -160,6 +160,12 @@ export class Engine {
     return tableRef(model, this.defaultSchema);
   }
 
+  /** Join table of an implicit many-to-many relation. */
+  joinTable(rel: RelationFieldDef): string {
+    if (!rel.through) throw new ValidationError(`'${rel.name}' is not a many-to-many relation`);
+    return tableRef(rel.through, this.defaultSchema);
+  }
+
   column(model: ModelDef, name: string): ColumnFieldDef {
     const f = getField(model, name);
     if (!f || f.kind === "relation") throw new ValidationError(`Unknown field '${name}' on model '${model.name}'`);
@@ -444,6 +450,7 @@ export class Engine {
     const target = this.model(rel.model);
     if (args.cursor !== undefined && !rel.list) throw new ValidationError(`'cursor' is only allowed on list relations ('${rel.name}')`);
     if (args.take !== undefined && (typeof args.take !== "number" || !Number.isInteger(args.take))) throw new ValidationError(`'take' must be an integer`);
+    if (rel.through) return this.loadManyToMany(model, parents, rel, args, q);
     // The cursor condition is value based, so one batched query applies it to every parent; take/skip are applied per parent below.
     const nestedCursor = args.cursor === undefined ? undefined : (args.take as number) < 0 ? "before" : "after";
     const groups = new Map<string, unknown[]>();
@@ -486,6 +493,81 @@ export class Engine {
         p[rel.name] = children[0] ? strip([children[0]], hidden)[0] : null;
       }
     }
+  }
+
+  /**
+   * Loads an implicit many-to-many relation. Per chunk of parents it reads the links from the
+   * join table and the linked rows in one ordered query (filtered through the other side of
+   * the relation), then hands each parent its rows in that order.
+   */
+  private async loadManyToMany(model: ModelDef, parents: Row[], rel: RelationFieldDef, args: Args, q: Queryable): Promise<void> {
+    const target = this.model(rel.model);
+    const t = rel.through!;
+    if (args.distinct !== undefined) throw new ValidationError(`'distinct' is not supported when loading the many-to-many relation '${rel.name}'`);
+    const ownKey = this.column(model, rel.localFields[0]!);
+    const targetKey = this.column(target, rel.targetFields[0]!);
+    const back = this.otherSide(model, rel);
+    const nestedCursor = args.cursor === undefined ? undefined : (args.take as number) < 0 ? "before" : "after";
+
+    const parentKeys = new Map<string, unknown>();
+    for (const p of parents) {
+      const key = keyString([p[ownKey.name]]);
+      if (key !== null) parentKeys.set(key, p[ownKey.name]);
+    }
+    const byParent = new Map<string, Row[]>();
+    let hidden = new Set<string>();
+    const { take, skip, ...childArgs } = args;
+    const ownValues = [...parentKeys.values()];
+    for (let i = 0; i < ownValues.length; i += IN_CHUNK) {
+      const chunk = ownValues.slice(i, i + IN_CHUNK);
+      // target key -> parent keys linked to it
+      const links = new Map<string, string[]>();
+      const pairs = await q.query<Row>(
+        `SELECT ${quoteIdent(t.localColumns[0]!)} AS "l", ${quoteIdent(t.targetColumns[0]!)} AS "t" FROM ${this.joinTable(rel)} WHERE ${quoteIdent(t.localColumns[0]!)} IN (${chunk.map(() => "?").join(", ")})`,
+        chunk.map((v) => encodeValue(this.contract, ownKey, v)),
+      );
+      if (!pairs.length) continue;
+      for (const r of pairs) {
+        const tk = keyString([decodeValue(this.contract, targetKey, r.t)])!;
+        const pk = keyString([decodeValue(this.contract, ownKey, r.l)])!;
+        const list = links.get(tk);
+        if (list) list.push(pk);
+        else links.set(tk, [pk]);
+      }
+      const linked = { [back.name]: { some: { [ownKey.name]: { in: chunk } } } };
+      const where = childArgs.where ? { AND: [childArgs.where, linked] } : linked;
+      const res = await this.readMany(target, { ...childArgs, where }, q, { paging: false, extraColumns: [targetKey.name], nestedCursor });
+      hidden = res.hidden;
+      for (const row of res.rows) {
+        for (const pk of links.get(keyString([row[targetKey.name]])!) ?? []) {
+          // each parent gets its own copy: one row can be linked to several parents
+          const list = byParent.get(pk);
+          if (list) list.push({ ...row });
+          else byParent.set(pk, [{ ...row }]);
+        }
+      }
+    }
+    const from = skip === undefined ? 0 : nonNegativeInt(skip, "skip");
+    for (const p of parents) {
+      const key = keyString([p[ownKey.name]]);
+      let children = key === null ? [] : (byParent.get(key) ?? []);
+      if (take !== undefined) {
+        const n = take as number;
+        children = n >= 0 ? children.slice(from, from + n) : children.slice(Math.max(0, children.length - from + n), children.length - from);
+      } else if (from) children = children.slice(from);
+      p[rel.name] = strip(children, hidden);
+    }
+  }
+
+  /** The relation field on the target model that is the other side of `rel`. */
+  private otherSide(model: ModelDef, rel: RelationFieldDef): RelationFieldDef {
+    const target = this.model(rel.model);
+    const other = target.fields.find(
+      (f): f is RelationFieldDef =>
+        f.kind === "relation" && f.relationName === rel.relationName && f.model === model.name && !(target === model && f.name === rel.name) && (rel.through ? f.through?.model === rel.through.model : !f.through),
+    );
+    if (!other) throw new ValidationError(`The other side of relation '${model.name}.${rel.name}' is not available`);
+    return other;
   }
 
   async count(model: ModelDef, args: Args = {}, q: Queryable): Promise<number | Row> {
@@ -817,6 +899,7 @@ export class Engine {
 
   /** Nested writes on the side without the foreign key (children of `parent`). */
   private async nestedBackSide(model: ModelDef, parent: Row, rel: RelationFieldDef, v: Row, q: Queryable, mode: "create" | "update"): Promise<void> {
+    if (rel.through) return this.nestedManyToMany(model, parent, rel, v, q, mode);
     const target = this.model(rel.model);
     const fk: Row = Object.fromEntries(rel.targetFields.map((tf, i) => [tf, parent[rel.localFields[i]!]]));
     if (Object.values(fk).some((x) => x === undefined)) throw new ValidationError(`Cannot write '${rel.name}': parent key of '${model.name}' is unknown`);
@@ -900,6 +983,104 @@ export class Engine {
             const row = await this.locate(target, c.where, q);
             if (row) await this.updateRecord(target, this.identity(target, row), fk, q);
             else await this.insertRecord(target, { ...(c.create as Row), ...fk }, q);
+          }
+          break;
+      }
+    }
+  }
+
+  /** Nested writes on an implicit many-to-many relation: rows are linked through the join table. */
+  private async nestedManyToMany(model: ModelDef, parent: Row, rel: RelationFieldDef, v: Row, q: Queryable, mode: "create" | "update"): Promise<void> {
+    const target = this.model(rel.model);
+    const t = rel.through!;
+    const ownKey = this.column(model, rel.localFields[0]!);
+    const targetKey = this.column(target, rel.targetFields[0]!);
+    const ownValue = parent[ownKey.name];
+    if (ownValue === undefined || ownValue === null) throw new ValidationError(`Cannot write '${rel.name}': parent key of '${model.name}' is unknown`);
+    const join = this.joinTable(rel);
+    const own = quoteIdent(t.localColumns[0]!);
+    const other = quoteIdent(t.targetColumns[0]!);
+    const ownParam = encodeValue(this.contract, ownKey, ownValue);
+    const targetParam = (row: Row) => encodeValue(this.contract, targetKey, row[targetKey.name]);
+    // rows of the target that are linked to this parent
+    const linked = { [this.otherSide(model, rel).name]: { some: { [ownKey.name]: ownValue } } };
+    const childWhere = (w: unknown) => (w === undefined || w === true ? linked : { AND: [w, linked] });
+    const link = (row: Row) =>
+      q.execute(`INSERT INTO ${join} (${own}, ${other}) SELECT ?, ? FROM DUMMY WHERE NOT EXISTS (SELECT 1 FROM ${join} WHERE ${own} = ? AND ${other} = ?)`, [
+        ownParam,
+        targetParam(row),
+        ownParam,
+        targetParam(row),
+      ]);
+    const unlink = (row: Row) => q.execute(`DELETE FROM ${join} WHERE ${own} = ? AND ${other} = ?`, [ownParam, targetParam(row)]);
+    const keysOf = (where: unknown) => this.findMany(target, { where, select: { [targetKey.name]: true } }, q);
+    const deleteTargets = async (rows: Row[]) => {
+      for (let i = 0; i < rows.length; i += IN_CHUNK) {
+        const chunk = rows.slice(i, i + IN_CHUNK);
+        // remove the links first, so the delete does not depend on the foreign key's ON DELETE action
+        await q.execute(`DELETE FROM ${join} WHERE ${other} IN (${chunk.map(() => "?").join(", ")})`, chunk.map(targetParam));
+        await this.deleteManyRaw(target, { [targetKey.name]: { in: chunk.map((r) => r[targetKey.name]) } }, q);
+      }
+    };
+    const find = async (where: unknown, what: string) => {
+      const row = await this.locate(target, where, q);
+      if (!row) throw new NotFoundError(target.name, `No '${target.name}' record found to ${what} in '${rel.name}'`);
+      return row;
+    };
+
+    const order = ["set", "disconnect", "delete", "deleteMany", "update", "updateMany", "upsert", "create", "createMany", "connect", "connectOrCreate"];
+    const ops = Object.keys(v).filter((k) => v[k] !== undefined);
+    for (const op of ops) if (!order.includes(op)) throw new ValidationError(`Unknown nested operation '${op}' on '${rel.name}'`);
+    if (mode === "create") for (const op of ops) if (!["create", "connect", "connectOrCreate"].includes(op)) throw new ValidationError(`'${op}' is only allowed in update`);
+
+    for (const op of order) {
+      const val = v[op];
+      if (val === undefined) continue;
+      switch (op) {
+        case "set":
+          await q.execute(`DELETE FROM ${join} WHERE ${own} = ?`, [ownParam]);
+          for (const w of toArray(val as Row | Row[])) await link(await find(w, "connect"));
+          break;
+        case "disconnect":
+          for (const w of toArray(val as Row | Row[])) {
+            const row = await this.locate(target, w, q);
+            if (row) await unlink(row);
+          }
+          break;
+        case "delete":
+          for (const w of toArray(val as Row | Row[])) await deleteTargets([await find(childWhere(w), "delete")]);
+          break;
+        case "deleteMany":
+          for (const w of toArray(val as Row | Row[])) await deleteTargets(await keysOf(childWhere(w)));
+          break;
+        case "update":
+          for (const u of toArray(val as Row | Row[])) {
+            const row = await find(childWhere(u.where), "update");
+            await this.updateRecord(target, this.identity(target, row), u.data as Row, q);
+          }
+          break;
+        case "updateMany":
+          for (const u of toArray(val as Row | Row[])) await this.updateManyRaw(target, childWhere(u.where), u.data as Row, q);
+          break;
+        case "upsert":
+          for (const u of toArray(val as Row | Row[])) {
+            const row = await this.locate(target, childWhere(u.where), q);
+            if (row) await this.updateRecord(target, this.identity(target, row), u.update as Row, q);
+            else await link(await this.insertRecord(target, u.create as Row, q));
+          }
+          break;
+        case "create":
+          for (const d of toArray(val as Row | Row[])) await link(await this.insertRecord(target, d, q));
+          break;
+        case "createMany":
+          throw new ValidationError(`createMany is not available on the many-to-many relation '${rel.name}'; use create`);
+        case "connect":
+          for (const w of toArray(val as Row | Row[])) await link(await find(w, "connect"));
+          break;
+        case "connectOrCreate":
+          for (const c of toArray(val as Row | Row[])) {
+            const row = await this.locate(target, c.where, q);
+            await link(row ?? (await this.insertRecord(target, c.create as Row, q)));
           }
           break;
       }

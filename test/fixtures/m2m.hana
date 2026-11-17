@@ -1,0 +1,26 @@
+// Implicit many-to-many relations, used by unit and type tests.
+
+datasource db {
+  provider = "hana"
+  schema   = "APP"
+}
+
+model Article {
+  id         Int        @id @default(autoincrement())
+  title      String
+  categories Category[]
+  @@map("ARTICLES")
+}
+
+model Category {
+  id       String    @id @db.NVarChar(20)
+  label    String
+  articles Article[]
+}
+
+model Member {
+  id        Int      @id
+  name      String
+  followers Member[] @relation("Follows")
+  following Member[] @relation("Follows")
+}

@@ -206,6 +206,10 @@ function modelTypes(contract: Contract, m: ModelDef): string {
     return keys ? `$r.OptionalKeys<${r.model}CreateManyInput, ${keys}>` : `${r.model}CreateManyInput`;
   };
 
+  // implicit many-to-many relations have no createMany (rows must be linked one by one)
+  const nestedCreateMany = (r: RelationFieldDef) =>
+    r.through ? "" : `createMany?: { data: ${nestedMany(r)} | ${nestedMany(r)}[]; skipDuplicates?: boolean }; `;
+
   // create / update inputs
   if (!readOnly || m.kind !== "view") {
     L.push(`export type ${M}CreateInput = {`);
@@ -217,7 +221,7 @@ function modelTypes(contract: Contract, m: ModelDef): string {
       const T = r.model;
       if (r.list) {
         L.push(
-          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; createMany?: { data: ${nestedMany(r)} | ${nestedMany(r)}[]; skipDuplicates?: boolean }; connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[] };`,
+          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; ${nestedCreateMany(r)}connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[] };`,
         );
       } else {
         L.push(`  ${r.name}?: { create?: ${T}CreateInput; connect?: ${T}WhereUniqueInput; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } };`);
@@ -244,7 +248,7 @@ function modelTypes(contract: Contract, m: ModelDef): string {
       const T = r.model;
       if (r.list) {
         L.push(
-          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; createMany?: { data: ${nestedMany(r)} | ${nestedMany(r)}[]; skipDuplicates?: boolean }; connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[]; set?: ${T}WhereUniqueInput[]; disconnect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; delete?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; deleteMany?: ${T}WhereInput | ${T}WhereInput[]; update?: { where: ${T}WhereUniqueInput; data: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; data: ${T}UpdateInput }[]; updateMany?: { where: ${T}WhereInput; data: ${T}UpdateManyInput } | { where: ${T}WhereInput; data: ${T}UpdateManyInput }[]; upsert?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput }[] };`,
+          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; ${nestedCreateMany(r)}connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[]; set?: ${T}WhereUniqueInput[]; disconnect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; delete?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; deleteMany?: ${T}WhereInput | ${T}WhereInput[]; update?: { where: ${T}WhereUniqueInput; data: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; data: ${T}UpdateInput }[]; updateMany?: { where: ${T}WhereInput; data: ${T}UpdateManyInput } | { where: ${T}WhereInput; data: ${T}UpdateManyInput }[]; upsert?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput }[] };`,
         );
       } else {
         L.push(

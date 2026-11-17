@@ -120,7 +120,27 @@ export interface RelationFieldDef {
   fkName?: string;
   /** `@ignore`: the foreign key is kept for migrations, the field is hidden from the client. */
   ignored?: boolean;
+  /**
+   * Set on both sides of an implicit many-to-many relation (two list fields without
+   * `@relation(fields, references)`). The rows are linked through a join table;
+   * `localFields` / `targetFields` are the primary keys of this model and the target.
+   */
+  through?: JoinTableDef;
   doc?: string;
+}
+
+/** Join table of an implicit many-to-many relation, as seen from one relation field. */
+export interface JoinTableDef {
+  /** Name of the hidden join model in `contract.models`, e.g. `_PostToTag`. */
+  model: string;
+  /** Table name. */
+  dbName: string;
+  /** Database schema; undefined means the datasource default schema. */
+  schema?: string;
+  /** Join table columns that hold this model's key (same order as `localFields`). */
+  localColumns: string[];
+  /** Join table columns that hold the target's key (same order as `targetFields`). */
+  targetColumns: string[];
 }
 
 export type ColumnFieldDef = ScalarFieldDef | EnumFieldDef;
@@ -159,6 +179,11 @@ export interface ModelDef {
   ignoredColumns?: IgnoredColumnDef[];
   /** `@@ignore`: the table is kept for migrations, the model is hidden from the client. */
   ignored?: boolean;
+  /**
+   * Join table of an implicit many-to-many relation (`_PostToTag` with columns `A`, `B`).
+   * Created by migrations, hidden from the client; the relation fields carry `through`.
+   */
+  implicit?: boolean;
   doc?: string;
 }
 
@@ -208,17 +233,17 @@ export function getColumn(model: ModelDef, name: string): ColumnFieldDef {
 }
 
 /**
- * The part of a contract the client sees: models with `@@ignore` and fields with `@ignore`
- * are removed, and so are unique constraints and indexes that use an ignored field. The hash
- * is kept, so it still identifies the full data model. Returns `contract` itself when nothing
- * is ignored.
+ * The part of a contract the client sees: models with `@@ignore`, implicit many-to-many join
+ * tables and fields with `@ignore` are removed, and so are unique constraints and indexes that
+ * use an ignored field. The hash is kept, so it still identifies the full data model. Returns
+ * `contract` itself when nothing is hidden.
  */
 export function clientContract(contract: Contract): Contract {
-  const anyIgnored = Object.values(contract.models).some((m) => m.ignored || m.fields.some((f) => f.ignored));
+  const anyIgnored = Object.values(contract.models).some((m) => m.ignored || m.implicit || m.fields.some((f) => f.ignored));
   if (!anyIgnored) return contract;
   const models: Record<string, ModelDef> = {};
   for (const [name, m] of Object.entries(contract.models)) {
-    if (m.ignored) continue;
+    if (m.ignored || m.implicit) continue;
     const hidden = new Set(m.fields.filter((f) => f.ignored).map((f) => f.name));
     const visible = (fields: readonly string[]): boolean => fields.every((f) => !hidden.has(f));
     models[name] = {
