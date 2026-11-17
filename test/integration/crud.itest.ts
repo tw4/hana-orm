@@ -178,3 +178,18 @@ test("distinct returns one row per value with both strategies", { skip: !enabled
     { email: "bob@example.com", orders: [{ total: 99 }] },
   ]);
 });
+
+test("orderBy relation fields, relation counts and aggregates", { skip: !enabled }, async () => {
+  const byCustomer = await db.order.findMany({ orderBy: [{ customer: { email: "desc" } }, { total: "asc" }], select: { total: true } });
+  assert.deepEqual(byCustomer.map((o) => o.total), [99, 3, 12.5]);
+  const byCount = await db.customer.findMany({ orderBy: [{ orders: { _count: "desc" } }, { email: "asc" }], select: { email: true } });
+  assert.deepEqual(byCount.map((c) => c.email), ["ada@example.com", "bob@example.com", "cy@example.com", "tx@example.com"]);
+  const ada = byCount[0]!;
+  const adaRow = await db.customer.findUniqueOrThrow({ where: { email: ada.email } });
+  const afterAda = await db.customer.findMany({ orderBy: { orders: { _count: "desc" } }, cursor: { id: adaRow.id }, skip: 1, take: 2, select: { email: true } });
+  assert.deepEqual(afterAda.map((c) => c.email), ["bob@example.com", "cy@example.com"]);
+  const lines = await db.orderLine.findMany({ orderBy: { order: { customer: { email: "asc" } } }, select: { sku: true } });
+  assert.deepEqual(lines, [{ sku: "A-1" }]);
+  const groups = await db.order.groupBy({ by: ["customerId"], _sum: { total: true }, orderBy: { _sum: { total: "desc" } } });
+  assert.deepEqual(groups.map((g) => g._sum.total), [99, 15.5]);
+});

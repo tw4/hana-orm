@@ -39,11 +39,29 @@ interface SelectOptions {
   distinctScope?: string[];
 }
 
-interface OrderItem {
-  field: ColumnFieldDef;
-  sql: string;
+interface OrderSpec {
+  /** Set when ordering by a column of the model itself (not through a relation or aggregate). */
+  field?: ColumnFieldDef;
+  /** Renders the ORDER BY expression for rows aliased as `alias`. */
+  expr: (alias: string) => string;
   desc: boolean;
   nulls?: "first" | "last";
+}
+
+interface OrderItem extends OrderSpec {
+  sql: string;
+}
+
+function sortSpec(v: unknown, key: string): { desc: boolean; nulls?: "first" | "last" } {
+  const spec = typeof v === "string" ? { sort: v } : isPlainObject(v) ? (v as { sort?: unknown; nulls?: unknown }) : {};
+  if (spec.sort !== "asc" && spec.sort !== "desc") throw new ValidationError(`orderBy.${key} must be 'asc' or 'desc'`);
+  if (spec.nulls !== undefined && spec.nulls !== "first" && spec.nulls !== "last") throw new ValidationError(`orderBy.${key}.nulls must be 'first' or 'last'`);
+  return { desc: spec.sort === "desc", ...(spec.nulls ? { nulls: spec.nulls as "first" | "last" } : {}) };
+}
+
+function columnOrder(f: ColumnFieldDef, alias: string, desc = false): OrderItem {
+  const expr = (a: string) => `${a}.${quoteIdent(f.dbName)}`;
+  return { field: f, expr, sql: expr(alias), desc };
 }
 
 function orderSql(items: OrderItem[]): string {
@@ -234,7 +252,6 @@ export class Engine {
     throw new ValidationError(`_count must be true or { select: { ... } }`);
   }
 
-  /** ORDER BY items as [column SQL, direction, nulls]. */
   private distinctFields(model: ModelDef, distinct: unknown): ColumnFieldDef[] {
     if (distinct === undefined || distinct === null) return [];
     const names = toArray(distinct as string | string[]);
@@ -242,22 +259,54 @@ export class Engine {
     return [...new Set(names)].map((n) => this.column(model, n));
   }
 
-  private orderItems(model: ModelDef, orderBy: unknown, alias: string): OrderItem[] {
-    const items: OrderItem[] = [];
+  /** ORDER BY items of `orderBy` for rows of `model` aliased as `alias`. */
+  private orderItems(model: ModelDef, orderBy: unknown, alias: string, ctx: SqlContext): OrderItem[] {
+    return this.orderSpecs(model, orderBy, ctx).map((s) => ({ ...s, sql: s.expr(alias) }));
+  }
+
+  /**
+   * Parses `orderBy` into expressions that can be rendered for any alias (the cursor condition
+   * renders them again against the cursor row). Relation entries become correlated subqueries:
+   * to-one relations order by a field of the related row, list relations by their `_count`.
+   */
+  private orderSpecs(model: ModelDef, orderBy: unknown, ctx: SqlContext, path = ""): OrderSpec[] {
+    const items: OrderSpec[] = [];
     for (const o of toArray(orderBy as Row | Row[])) {
       if (!isPlainObject(o)) throw new ValidationError(`orderBy on '${model.name}' must be an object or array of objects`);
       for (const [key, v] of Object.entries(o)) {
         if (v === undefined) continue;
         const f = getField(model, key);
         if (!f) throw new ValidationError(`Unknown field '${key}' in orderBy of '${model.name}'`);
-        if (f.kind === "relation") throw new ValidationError(`Ordering by relation '${key}' is not supported yet`);
-        const spec = typeof v === "string" ? { sort: v } : (v as { sort?: unknown; nulls?: unknown });
-        if (spec.sort !== "asc" && spec.sort !== "desc") throw new ValidationError(`orderBy.${key} must be 'asc' or 'desc'`);
-        if (spec.nulls !== undefined && spec.nulls !== "first" && spec.nulls !== "last") throw new ValidationError(`orderBy.${key}.nulls must be 'first' or 'last'`);
-        items.push({ field: f, sql: `${alias}.${quoteIdent(f.dbName)}`, desc: spec.sort === "desc", ...(spec.nulls ? { nulls: spec.nulls as "first" | "last" } : {}) });
+        if (f.kind === "relation") {
+          items.push(...this.relationOrderSpecs(model, f, v, ctx, `${path}${key}.`));
+          continue;
+        }
+        items.push({ field: path ? undefined : f, expr: (a) => `${a}.${quoteIdent(f.dbName)}`, ...sortSpec(v, `${path}${key}`) });
       }
     }
     return items;
+  }
+
+  private relationOrderSpecs(model: ModelDef, rel: RelationFieldDef, value: unknown, ctx: SqlContext, path: string): OrderSpec[] {
+    const target = this.model(rel.model);
+    if (!isPlainObject(value)) throw new ValidationError(`orderBy.${path.slice(0, -1)} must be an object`);
+    if (rel.list) {
+      const keys = Object.keys(value).filter((k) => value[k] !== undefined);
+      if (keys.length !== 1 || keys[0] !== "_count") throw new ValidationError(`orderBy.${path.slice(0, -1)} is a list relation; order it by { _count: 'asc' | 'desc' }`);
+      const expr = (a: string) => {
+        const ta = ctx.alias();
+        return `(SELECT COUNT(*) FROM ${this.table(target)} ${ta} WHERE ${joinCondition(this, model, rel, a, ta)})`;
+      };
+      return [{ expr, ...sortSpec(value._count, `${path}_count`) }];
+    }
+    return this.orderSpecs(target, value, ctx, path).map((inner) => ({
+      ...inner,
+      field: undefined,
+      expr: (a: string) => {
+        const ta = ctx.alias();
+        return `(SELECT ${inner.expr(ta)} FROM ${this.table(target)} ${ta} WHERE ${joinCondition(this, model, rel, a, ta)})`;
+      },
+    }));
   }
 
   /**
@@ -287,15 +336,13 @@ export class Engine {
     const distinct = this.distinctFields(model, args.distinct);
     if (distinct.length) for (const name of options.distinctScope ?? []) if (!distinct.some((d) => d.name === name)) distinct.push(this.column(model, name));
 
-    let order = this.orderItems(model, args.orderBy, alias);
+    let order = this.orderItems(model, args.orderBy, alias, ctx);
     const requestedOrder = [...order];
     const needsStableOrder = paging && (take !== undefined || skip !== undefined || args.cursor !== undefined);
     // After `distinct` the distinct fields identify a row, so they make the order total; otherwise the primary key does.
     const tieBreakers = distinct.length ? distinct : (model.primaryKey?.fields ?? []).map((pk) => this.column(model, pk));
     if (needsStableOrder) {
-      for (const f of tieBreakers) {
-        if (!order.some((o) => o.field.name === f.name)) order.push({ field: f, sql: `${alias}.${quoteIdent(f.dbName)}`, desc: false });
-      }
+      for (const f of tieBreakers) if (!order.some((o) => o.field?.name === f.name)) order.push(columnOrder(f, alias));
     }
     if (reverse) order = order.map((o) => ({ ...o, desc: !o.desc, ...(o.nulls ? { nulls: o.nulls === "first" ? "last" : "first" } : {}) }));
 
@@ -305,7 +352,7 @@ export class Engine {
     let selectDistinct = false;
     if (distinct.length) {
       const names = new Set(distinct.map((d) => d.name));
-      const plain = !sel.counts.length && sel.columns.every((c) => names.has(c.name)) && order.every((o) => names.has(o.field.name));
+      const plain = !sel.counts.length && sel.columns.every((c) => names.has(c.name)) && order.every((o) => o.field && names.has(o.field.name));
       if (plain) {
         // Every returned column is a distinct field: SELECT DISTINCT is enough.
         selectDistinct = true;
@@ -314,7 +361,7 @@ export class Engine {
         // Keep the first row of each group in the requested order; the outer query reuses the alias,
         // so ORDER BY, cursor and _count expressions work unchanged on the numbered rows.
         const partition = distinct.map((d) => `${alias}.${quoteIdent(d.dbName)}`).join(", ");
-        const windowOrder: OrderItem[] = requestedOrder.length ? requestedOrder : (model.primaryKey?.fields ?? []).map((pk) => this.column(model, pk)).map((f) => ({ field: f, sql: `${alias}.${quoteIdent(f.dbName)}`, desc: false }));
+        const windowOrder = requestedOrder.length ? requestedOrder : (model.primaryKey?.fields ?? []).map((pk) => columnOrder(this.column(model, pk), alias));
         const over = `PARTITION BY ${partition}${windowOrder.length ? ` ORDER BY ${orderSql(windowOrder)}` : ""}`;
         from = `(SELECT ${alias}.*, ROW_NUMBER() OVER (${over}) AS "__rn" FROM ${this.table(model)} ${alias}${where ? ` WHERE ${where}` : ""}) ${alias}`;
         conds.push(`${alias}."__rn" = 1`);
@@ -330,20 +377,21 @@ export class Engine {
   }
 
   /** Rows at or after the cursor row in the given ordering (lexicographic comparison). */
-  private cursorCondition(model: ModelDef, cursor: unknown, order: { field: ColumnFieldDef; sql: string; desc: boolean }[], ctx: SqlContext): string {
+  private cursorCondition(model: ModelDef, cursor: unknown, order: OrderItem[], ctx: SqlContext): string {
     if (!isPlainObject(cursor)) throw new ValidationError(`'cursor' must be a unique where object`);
     this.assertUniqueWhere(model, cursor);
     if (!order.length) throw new ValidationError(`Cursor pagination on '${model.name}' needs an orderBy or a primary key`);
-    const cursorValue = (f: ColumnFieldDef) => {
+    // The order expression evaluated for the cursor row (also works for relation and _count orderings).
+    const cursorValue = (o: OrderItem) => {
       const ca = ctx.alias();
       const w = buildWhere(this, model, cursor, ca, ctx);
-      return `(SELECT ${ca}.${quoteIdent(f.dbName)} FROM ${this.table(model)} ${ca} WHERE ${w})`;
+      return `(SELECT ${o.expr(ca)} FROM ${this.table(model)} ${ca} WHERE ${w})`;
     };
     const ors: string[] = [];
     for (let i = 0; i <= order.length; i++) {
       const ands: string[] = [];
-      for (let j = 0; j < Math.min(i, order.length); j++) ands.push(`${order[j]!.sql} = ${cursorValue(order[j]!.field)}`);
-      if (i < order.length) ands.push(`${order[i]!.sql} ${order[i]!.desc ? "<" : ">"} ${cursorValue(order[i]!.field)}`);
+      for (let j = 0; j < Math.min(i, order.length); j++) ands.push(`${order[j]!.sql} = ${cursorValue(order[j]!)}`);
+      if (i < order.length) ands.push(`${order[i]!.sql} ${order[i]!.desc ? "<" : ">"} ${cursorValue(order[i]!)}`);
       ors.push(ands.join(" AND "));
     }
     return ors.map((s) => `(${s})`).join(" OR ");
@@ -476,11 +524,10 @@ export class Engine {
     const cols = [...byFields.map((f) => `${alias}.${quoteIdent(f.dbName)} AS ${quoteIdent(f.name)}`), ...exprs];
     const where = buildWhere(this, model, args.where, alias, ctx);
     const having = this.buildHaving(model, args.having, by, alias, ctx);
-    const order = this.orderItems(model, args.orderBy, alias);
-    for (const o of order) if (!by.includes(o.field.name)) throw new ValidationError(`orderBy '${o.field.name}' must be one of the 'by' fields`);
+    const order = this.groupOrderItems(model, args.orderBy, by, alias, ctx);
     let sql = `SELECT ${cols.join(", ")} FROM ${this.table(model)} ${alias}${where ? ` WHERE ${where}` : ""} GROUP BY ${byFields.map((f) => `${alias}.${quoteIdent(f.dbName)}`).join(", ")}`;
     if (having) sql += ` HAVING ${having}`;
-    if (order.length) sql += ` ORDER BY ${order.map((o) => `${o.sql} ${o.desc ? "DESC" : "ASC"}`).join(", ")}`;
+    if (order.length) sql += ` ORDER BY ${orderSql(order)}`;
     if (args.take !== undefined || args.skip !== undefined) sql += ` LIMIT ${args.take === undefined ? MAX_LIMIT : nonNegativeInt(args.take, "take")}${args.skip ? ` OFFSET ${nonNegativeInt(args.skip, "skip")}` : ""}`;
     const rows = await q.query<Row>(sql, ctx.params);
     return rows.map((r) => {
@@ -488,6 +535,36 @@ export class Engine {
       for (const f of byFields) out[f.name] = decodeValue(this.contract, f, r[f.name]);
       return { ...out, ...decode(r) };
     });
+  }
+
+  /** ORDER BY of a groupBy: `by` fields and aggregates (`{ _count: { id: 'desc' } }`, `{ _sum: { total: 'asc' } }`, ...). */
+  private groupOrderItems(model: ModelDef, orderBy: unknown, by: string[], alias: string, ctx: SqlContext): OrderItem[] {
+    const items: OrderItem[] = [];
+    for (const o of toArray(orderBy as Row | Row[])) {
+      if (!isPlainObject(o)) throw new ValidationError(`orderBy on '${model.name}' must be an object or array of objects`);
+      for (const [key, v] of Object.entries(o)) {
+        if (v === undefined) continue;
+        if (key === "_count" || key === "_sum" || key === "_avg" || key === "_min" || key === "_max") {
+          if (!isPlainObject(v)) throw new ValidationError(`orderBy.${key} on '${model.name}' must be an object of fields`);
+          for (const [name, dir] of Object.entries(v)) {
+            if (dir === undefined) continue;
+            let expr: string;
+            if (key === "_count" && name === "_all") expr = "COUNT(*)";
+            else {
+              const f = this.column(model, name);
+              if ((key === "_sum" || key === "_avg") && !isNumericField(f)) throw new ValidationError(`orderBy.${key} needs numeric fields; '${f.name}' is not numeric`);
+              expr = `${key.slice(1).toUpperCase()}(${alias}.${quoteIdent(f.dbName)})`;
+            }
+            items.push({ expr: () => expr, sql: expr, ...sortSpec(dir, `${key}.${name}`) });
+          }
+          continue;
+        }
+        const f = this.column(model, key);
+        if (!by.includes(f.name)) throw new ValidationError(`orderBy '${f.name}' must be one of the 'by' fields or an aggregate`);
+        items.push(...this.orderItems(model, { [key]: v }, alias, ctx));
+      }
+    }
+    return items;
   }
 
   /**

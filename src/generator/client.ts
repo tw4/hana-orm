@@ -127,6 +127,7 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   // order by
   L.push(`export type ${M}OrderByInput = {`);
   for (const f of cols) L.push(`  ${f.name}?: $r.SortOrder | $r.SortOrderInput;`);
+  for (const r of rels) L.push(r.list ? `  ${r.name}?: { _count?: $r.SortOrder };` : `  ${r.name}?: ${r.model}OrderByInput;`);
   L.push("};", "");
 
   // select / include
@@ -187,7 +188,17 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   L.push(`  _min?: { ${cols.map((f) => `${f.name}?: ${filterType(contract, { ...f, optional: true })}`).join("; ")} };`);
   L.push(`  _max?: { ${cols.map((f) => `${f.name}?: ${filterType(contract, { ...f, optional: true })}`).join("; ")} };`);
   L.push("};");
-  L.push(`export type ${M}GroupByArgs = Omit<${M}AggregateArgs, "cursor"> & { by: ${M}ScalarField | ${M}ScalarField[]; having?: ${M}HavingInput };`, "");
+  const sort = (fs: ColumnFieldDef[]) => fs.map((f) => `${f.name}?: $r.SortOrder | $r.SortOrderInput`).join("; ");
+  L.push(`/** groupBy \`orderBy\`: \`by\` fields and aggregates of each group. */`);
+  L.push(`export type ${M}GroupByOrderByInput = {`);
+  for (const f of cols) L.push(`  ${f.name}?: $r.SortOrder | $r.SortOrderInput;`);
+  L.push(`  _count?: { _all?: $r.SortOrder; ${sort(cols)} };`);
+  L.push(`  _sum?: { ${sort(numericCols)} };`, `  _avg?: { ${sort(numericCols)} };`, `  _min?: { ${sort(cols)} };`, `  _max?: { ${sort(cols)} };`);
+  L.push("};");
+  L.push(
+    `export type ${M}GroupByArgs = Omit<${M}AggregateArgs, "cursor" | "orderBy"> & { by: ${M}ScalarField | ${M}ScalarField[]; having?: ${M}HavingInput; orderBy?: ${M}GroupByOrderByInput | ${M}GroupByOrderByInput[] };`,
+    "",
+  );
 
   // create / update inputs
   if (!readOnly || m.kind !== "view") {
