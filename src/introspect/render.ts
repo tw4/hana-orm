@@ -361,6 +361,7 @@ function buildColumns(plan: ModelPlan, enums: Map<string, { name: string; dbName
       attrs.push(m ? `@unique(${m})` : "@unique");
     }
     if (ex && attr(ex.decl.attributes, "updatedAt")) attrs.push("@updatedAt");
+    if (ex && attr(ex.decl.attributes, "ignore")) attrs.push("@ignore");
     if (name !== col.name) attrs.push(`@map(${quoteString(col.name)})`);
     if (native) attrs.push(`@${native}`);
     const optional = col.nullable && !(pk && pk.columns.includes(col.name));
@@ -471,7 +472,6 @@ function buildRelations(plans: Map<string, ModelPlan>, warnings: string[]): void
     if (fk.onUpdate !== "RESTRICT") relArgs.push(`onUpdate: ${actionName(fk.onUpdate)}`);
     const m = mapArg(fk.name, "FK", owner.table.name, fk.columns);
     if (m) relArgs.push(m);
-    owner.relationLines.push({ name: ownerName, type: `${target.name}${optional ? "?" : ""}`, attrs: [`@relation(${relArgs.join(", ")})`], ...(exOwner?.doc ? { doc: exOwner.doc } : {}) });
 
     // back side
     const ownerTable = owner.table as PhysicalTable;
@@ -493,13 +493,27 @@ function buildRelations(plans: Map<string, ModelPlan>, warnings: string[]): void
       const base = !needsName ? (oneToOne ? ownerLower : plural(ownerLower)) : `${ownerName}${upperFirst(oneToOne ? owner.name : plural(owner.name))}`;
       backName = uniqueName(base, target.taken);
     }
+    // Keep @ignore from the existing schema. A relation must be ignored when it touches an
+    // @@ignore model or an ignored foreign key field, and both sides are ignored together.
+    const ignored =
+      !!(exOwner && attr(exOwner.attributes, "ignore")) ||
+      !!(exBack && attr(exBack.attributes, "ignore")) ||
+      modelIgnored(owner) ||
+      modelIgnored(target) ||
+      owner.lines.some((l) => r.ownerFields.includes(l.name) && l.attrs.includes("@ignore"));
+    const ignoreAttr = (plan: ModelPlan): string[] => (ignored && !modelIgnored(plan) ? ["@ignore"] : []);
+    owner.relationLines.push({ name: ownerName, type: `${target.name}${optional ? "?" : ""}`, attrs: [...ignoreAttr(owner), `@relation(${relArgs.join(", ")})`], ...(exOwner?.doc ? { doc: exOwner.doc } : {}) });
     target.relationLines.push({
       name: backName,
       type: oneToOne ? `${owner.name}?` : `${owner.name}[]`,
-      attrs: relationName ? [`@relation(${quoteString(relationName)})`] : [],
+      attrs: [...ignoreAttr(target), ...(relationName ? [`@relation(${quoteString(relationName)})`] : [])],
       ...(exBack?.doc ? { doc: exBack.doc } : {}),
     });
   }
+}
+
+function modelIgnored(plan: ModelPlan): boolean {
+  return !!plan.existing && !!attr(plan.existing.decl.attributes, "ignore");
 }
 
 function actionName(a: string): string {
@@ -516,6 +530,7 @@ function renderModel(plan: ModelPlan, defaultSchema: string): string {
   if (t.name !== plan.name) block.push(`@@map(${quoteString(t.name)})`);
   const schema = t.schema ?? undefined;
   if (schema && schema !== defaultSchema) block.push(`@@schema(${quoteString(schema)})`);
+  if (modelIgnored(plan)) block.push("@@ignore");
   const head: string[] = [];
   const doc = plan.existing?.decl.doc ?? ("comment" in t && t.comment ? t.comment : undefined);
   if (plan.kind === "model" && !(t as PhysicalTable).primaryKey) head.push("// This table has no primary key; the client treats it as read-only.");

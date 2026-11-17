@@ -1,4 +1,4 @@
-import { columnFields, relationFields, type ColumnFieldDef, type Contract, type ModelDef, type RelationFieldDef } from "../schema/contract.ts";
+import { clientContract, columnFields, relationFields, type ColumnFieldDef, type Contract, type ModelDef, type RelationFieldDef } from "../schema/contract.ts";
 
 export interface GenerateOptions {
   /** Module the generated code imports the runtime from (default `hana-orm/runtime`). */
@@ -276,7 +276,9 @@ function modelTypes(contract: Contract, m: ModelDef): string {
 }
 
 /** Generates the TypeScript source of a typed client for `contract`. */
-export function generateClient(contract: Contract, options: GenerateOptions = {}): string {
+export function generateClient(fullContract: Contract, options: GenerateOptions = {}): string {
+  // @ignore / @@ignore parts stay in the schema for migrations but never reach the client
+  const contract = clientContract(fullContract);
   const runtime = options.runtimeImport ?? "hana-orm/runtime";
   const C = options.clientName ?? "HanaClient";
   const models = Object.values(contract.models);

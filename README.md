@@ -76,6 +76,36 @@ model Post {
 Instead of separate fields the datasource also accepts
 `url = env("DATABASE_URL")` with `hana://user:password@host:port/?databaseName=DB&currentSchema=APP&encrypt=true`.
 
+#### Ignoring fields and models
+
+`@ignore` on a field and `@@ignore` on a model keep the column or table in the schema, so
+migrations and drift checks still know about it, but hide it from the generated client:
+
+```
+model User {
+  id        Int     @id
+  legacyKey String? @ignore @map("LEGACY_KEY")
+  audits    Audit[] @ignore
+}
+
+model Audit {
+  id     Int  @id
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  @@ignore
+}
+```
+
+- A primary key field cannot be ignored; ignore the whole model instead.
+- A relation that points to an ignored model, or uses an ignored foreign key field, must be
+  ignored too, and both sides of a relation are ignored together.
+- Unique constraints that use an ignored field are not offered in `where` of `findUnique`.
+- The client cannot write an ignored column, so a required ignored column needs a database
+  default for `create` to work.
+- `Unsupported("TYPE")` fields are always hidden from the client. `db pull` keeps `@ignore`
+  and `@@ignore` when it updates an existing schema.
+
 ### Queries
 
 ```ts
