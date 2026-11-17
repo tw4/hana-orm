@@ -16,7 +16,7 @@ import {
 } from "./commands.ts";
 
 export const DB_MIGRATE_HELP = `Database commands:
-  db pull [--tables A,B] [--exclude X] [--schema S] [--views] [--print]
+  db pull [--tables A,B] [--exclude X] [--db-schema S] [--views] [--print]
                               Introspect the database and write models into the schema file.
                               Patterns are comma separated and may use * and ?.
   db push [--allow-destructive] [--dry-run]

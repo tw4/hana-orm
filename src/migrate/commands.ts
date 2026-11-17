@@ -91,7 +91,7 @@ function relPath(ctx: CliContext, p: string): string {
 export async function dbPull(args: ParsedArgs, ctx: CliContext): Promise<number> {
   return withDb(ctx, async (db) => {
     const defaultSchema = await resolveDefaultSchema(ctx, db);
-    const schema = stringFlag(args, "schema") ?? defaultSchema;
+    const schema = stringFlag(args, "db-schema", "dbSchema") ?? defaultSchema;
     const filter = makeTableFilter(parsePatternList(flag(args, "tables")), parsePatternList(flag(args, "exclude")));
     const views = boolFlag(args, "views");
     const physical = await introspect(db, { schemas: [schema], defaultSchema, ...(filter ? { filter } : {}), views });
