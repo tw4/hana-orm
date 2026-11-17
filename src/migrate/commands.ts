@@ -11,6 +11,7 @@ import type { Contract } from "../schema/contract.ts";
 import { currentSchema, introspect } from "../introspect/catalog.ts";
 import { makeTableFilter, parsePatternList } from "../introspect/filter.ts";
 import { renderSchema } from "../introspect/render.ts";
+import { isSchemaFolder } from "../schema/files.ts";
 import { computeStatus, deploy, deployBlockers, runOps } from "./apply.ts";
 import { contractToPhysical } from "./contract-to-physical.ts";
 import { diffSchemas, emptyRenames } from "./diff.ts";
@@ -92,13 +93,18 @@ function relPath(ctx: CliContext, p: string): string {
 // ---- db pull --------------------------------------------------------------------
 
 export async function dbPull(args: ParsedArgs, ctx: CliContext): Promise<number> {
+  const folder = isSchemaFolder(ctx.schemaPath);
+  if (folder && !boolFlag(args, "print")) {
+    ctx.warn(`${relPath(ctx, ctx.schemaPath)} is a schema folder; db pull writes a single file. Pass --schema <folder>/<file>.hana to update one file, or --print.`);
+    return 1;
+  }
   return withDb(ctx, async (db) => {
     const defaultSchema = await resolveDefaultSchema(ctx, db);
     const schema = stringFlag(args, "db-schema", "dbSchema") ?? defaultSchema;
     const filter = makeTableFilter(parsePatternList(flag(args, "tables")), parsePatternList(flag(args, "exclude")));
     const views = boolFlag(args, "views");
     const physical = await introspect(db, { schemas: [schema], defaultSchema, ...(filter ? { filter } : {}), views });
-    const existingSource = existsSync(ctx.schemaPath) ? await readFile(ctx.schemaPath, "utf8") : undefined;
+    const existingSource = !folder && existsSync(ctx.schemaPath) ? await readFile(ctx.schemaPath, "utf8") : undefined;
     const scopeKey = (name: string): string => tableKey(schema === defaultSchema ? undefined : schema, name);
     const inScope = (key: string): boolean => {
       const dot = key.indexOf(".");

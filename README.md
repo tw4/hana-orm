@@ -133,6 +133,25 @@ npx hana-orm migrate status                  # applied / pending / drift
 - For an existing database: `hana-orm db pull`, then `hana-orm migrate baseline`.
 - For prototyping: `hana-orm db push` applies the schema directly without history.
 
+### Formatting and multi-file schemas
+
+```sh
+npx hana-orm format           # rewrite schema files in the canonical layout
+npx hana-orm format --check   # CI: exit 1 and list files that are not formatted
+```
+
+`format` aligns field names, types and attributes in columns, orders attributes
+(`@id @default @unique @updatedAt @ignore @relation @map @db.*`, then
+`@@id @@unique @@index @@map @@schema @@ignore`), normalizes spacing and blank lines and keeps
+all comments. It is idempotent and refuses to touch a file with syntax errors.
+
+A schema can also be a folder: `--schema schema/` (or a `./schema/` folder found by default)
+merges every `*.hana` file directly inside it into one schema, sorted by file name. Models may
+reference models in other files; there is one `datasource` block in the whole folder.
+Migrations then live in `schema/migrations/` and generator outputs are relative to the folder.
+`db pull` writes a single file, so point it at one file of the folder (`--schema schema/legacy.hana`)
+or use `--print`.
+
 ## Development
 
 ```sh

@@ -20,7 +20,7 @@ export class SchemaError extends Error {
   static format(diagnostics: Diagnostic[], file?: string): string {
     const where = file ?? "schema";
     return diagnostics
-      .map((d) => (d.pos ? `${where}:${d.pos.line}:${d.pos.col} - ${d.message}` : `${where} - ${d.message}`))
+      .map((d) => (d.pos ? `${d.pos.file ?? where}:${d.pos.line}:${d.pos.col} - ${d.message}` : `${where} - ${d.message}`))
       .join("\n");
   }
 }

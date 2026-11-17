@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, watch, writeFileSync
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { compileSchema } from "../schema/build.ts";
+import { compileSchemaSources, isSchemaFolder, readSchemaSources } from "../schema/files.ts";
+import { formatSchema } from "../schema/format.ts";
 import type { Contract } from "../schema/contract.ts";
 import { SchemaError } from "../schema/errors.ts";
 import { generateClient } from "../generator/client.ts";
@@ -22,10 +23,13 @@ Commands
   init                 Create schema.hana and .env.example in the current folder
   generate [--watch]   Generate the typed client from the schema
   validate             Check the schema for errors
+  format [--check]     Format the schema file(s) in place: aligned columns, attribute order,
+                       spacing. --check only lists files that are not formatted (exit 1).
   version              Print the version
 ${DB_MIGRATE_HELP}
 Global options
-  --schema <path>      Schema file (default: ./schema.hana, then ./hana/schema.hana)
+  --schema <path>      Schema file, or a folder whose *.hana files are merged into one schema
+                       (default: ./schema.hana, then ./hana/schema.hana, then ./schema/)
   --help               Show help
 `;
 
@@ -45,7 +49,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 // Flags that never take a value, so `--watch schema.hana` is not misread.
-const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes"]);
+const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes", "check"]);
 
 function normalizeFlags(args: ParsedArgs): ParsedArgs {
   for (const [k, v] of Object.entries(args.flags)) {
@@ -63,22 +67,33 @@ function findSchema(cwd: string, flag: string | boolean | undefined): string {
     const p = resolve(cwd, candidate);
     if (existsSync(p)) return p;
   }
+  if (isSchemaFolder(resolve(cwd, "schema"))) return resolve(cwd, "schema");
   return resolve(cwd, "schema.hana");
+}
+
+/** Folder that holds `migrations/` and that generator outputs are relative to. */
+export function schemaDir(schemaPath: string): string {
+  return isSchemaFolder(schemaPath) ? schemaPath : dirname(schemaPath);
+}
+
+/** Reads and compiles the schema file or folder. */
+export function loadSchema(cwd: string, schemaPath: string): Contract {
+  if (!existsSync(schemaPath)) throw new Error(`Schema file not found: ${relative(cwd, schemaPath) || schemaPath}. Run 'hana-orm init' or pass --schema.`);
+  return compileSchemaSources(readSchemaSources(schemaPath, cwd));
 }
 
 function createContext(cwd: string, schemaPath: string): CliContext {
   let cached: Contract | undefined;
   const loadContract = async () => {
     if (cached) return cached;
-    if (!existsSync(schemaPath)) throw new Error(`Schema file not found: ${relative(cwd, schemaPath) || schemaPath}. Run 'hana-orm init' or pass --schema.`);
-    cached = compileSchema(readFileSync(schemaPath, "utf8"), { file: relative(cwd, schemaPath) });
+    cached = loadSchema(cwd, schemaPath);
     return cached;
   };
   const datasource = async () => (existsSync(schemaPath) ? (await loadContract()).datasource : undefined);
   return {
     cwd,
     schemaPath,
-    migrationsDir: join(dirname(schemaPath), "migrations"),
+    migrationsDir: join(schemaDir(schemaPath), "migrations"),
     loadContract,
     async connect() {
       return new HanaDriver(resolveConnectionConfig(await datasource()), { poolSize: 2 });
@@ -154,7 +169,7 @@ async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<number> {
   const once = async (): Promise<boolean> => {
     let contract: Contract;
     try {
-      contract = compileSchema(readFileSync(ctx.schemaPath, "utf8"), { file: relative(ctx.cwd, ctx.schemaPath) });
+      contract = loadSchema(ctx.cwd, ctx.schemaPath);
     } catch (e) {
       if (e instanceof SchemaError) {
         console.error(e.message);
@@ -164,7 +179,7 @@ async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<number> {
     }
     const generators = contract.generators.length ? contract.generators : [{ name: "client", provider: "hana-orm", output: "./generated/hana" }];
     for (const g of generators) {
-      const outDir = resolve(dirname(ctx.schemaPath), String(g.output ?? "./generated/hana"));
+      const outDir = resolve(schemaDir(ctx.schemaPath),String(g.output ?? "./generated/hana"));
       mkdirSync(outDir, { recursive: true });
       const file = join(outDir, "index.ts");
       const portable = { ...contract, generators: contract.generators.map(({ output: _o, ...rest }) => rest) } as Contract;
@@ -182,6 +197,27 @@ async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<number> {
     timer = setTimeout(() => void once(), 100);
   });
   return new Promise(() => {});
+}
+
+/** `hana-orm format [--check]`: formats every schema file; with --check it only reports. */
+export function cmdFormat(ctx: CliContext, args: ParsedArgs): number {
+  if (!existsSync(ctx.schemaPath)) throw new Error(`Schema file not found: ${relative(ctx.cwd, ctx.schemaPath) || ctx.schemaPath}. Run 'hana-orm init' or pass --schema.`);
+  const check = !!args.flags.check;
+  const sources = readSchemaSources(ctx.schemaPath, ctx.cwd);
+  const changed: string[] = [];
+  for (const s of sources) {
+    const formatted = formatSchema(s.source, s.file);
+    if (formatted === s.source) continue;
+    changed.push(s.file);
+    if (!check) writeFileSync(s.path!, formatted);
+  }
+  if (check) {
+    for (const f of changed) ctx.warn(`${f} is not formatted`);
+    ctx.log(changed.length ? "Run 'hana-orm format' to fix." : `All ${sources.length} schema file(s) are formatted.`);
+    return changed.length ? 1 : 0;
+  }
+  ctx.log(changed.length ? `Formatted ${changed.join(", ")}.` : `All ${sources.length} schema file(s) were already formatted.`);
+  return 0;
 }
 
 async function cmdValidate(ctx: CliContext): Promise<number> {
@@ -208,6 +244,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdGenerate(ctx, args);
       case "validate":
         return await cmdValidate(ctx);
+      case "format":
+        return cmdFormat(ctx, args);
       case "version":
       case "--version":
         console.log(VERSION);

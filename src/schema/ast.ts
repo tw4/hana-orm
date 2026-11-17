@@ -3,6 +3,8 @@
 export interface Position {
   line: number;
   col: number;
+  /** Source file, set when a schema is compiled from several files. */
+  file?: string;
 }
 
 export type Value =
