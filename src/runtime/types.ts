@@ -66,6 +66,8 @@ export type JsonValue = string | number | boolean | null | JsonValue[] | { [key:
 export type NumberUpdate<T> = T | { set?: T; increment?: T; decrement?: T; multiply?: T; divide?: T };
 export type NullableNumberUpdate<T> = T | null | { set?: T | null; increment?: T; decrement?: T; multiply?: T; divide?: T };
 export type SetUpdate<T> = T | { set?: T };
+/** `T` with the keys `K` made optional (nested createMany rows, whose foreign key the runtime fills in). */
+export type OptionalKeys<T, K extends keyof T> = Simplify<Omit<T, K> & Partial<Pick<T, K>>>;
 
 export type Truthy<V> = V extends false | undefined | null ? false : true;
 export type Simplify<T> = { [K in keyof T]: T[K] } & {};

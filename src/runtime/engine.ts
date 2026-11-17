@@ -888,8 +888,8 @@ export class Engine {
           break;
         case "createMany": {
           requireList(op);
-          const spec = val as { data: Row | Row[] };
-          await this.createManyRaw(target, toArray(spec.data).map((d) => ({ ...d, ...fk })), q);
+          const spec = val as { data: Row | Row[]; skipDuplicates?: boolean };
+          await this.createManyRaw(target, toArray(spec.data).map((d) => ({ ...d, ...fk })), q, spec.skipDuplicates === true);
           break;
         }
         case "connect":
@@ -1094,45 +1094,137 @@ export class Engine {
   }
 
   async createMany(model: ModelDef, args: Args, q: Queryable): Promise<{ count: number }> {
-    if (args.skipDuplicates) throw new ValidationError(`skipDuplicates is not supported on SAP HANA yet`);
-    return { count: await this.createManyRaw(model, toArray(args.data as Row | Row[]), q) };
+    if (args.data === undefined) throw new ValidationError(`createMany on '${model.name}' needs 'data'`);
+    return { count: await this.createManyRaw(model, toArray(args.data as Row | Row[]), q, args.skipDuplicates === true) };
   }
 
-  private async createManyRaw(model: ModelDef, rows: Row[], q: Queryable): Promise<number> {
+  /**
+   * Inserts the rows and reads them back. With `skipDuplicates`, only the rows that were
+   * inserted are returned. Rows come back in the order of `data`.
+   */
+  async createManyAndReturn(model: ModelDef, args: Args, q: Queryable): Promise<Row[]> {
+    if (args.data === undefined) throw new ValidationError(`createManyAndReturn on '${model.name}' needs 'data'`);
+    const skip = args.skipDuplicates === true;
+    const keys: Row[] = [];
+    for (const data of toArray(args.data as Row | Row[])) {
+      const values = this.createManyValues(model, data, "createManyAndReturn");
+      const fields = columnFields(model).filter((f) => values[f.name] !== undefined);
+      const insert = this.createManyInsert(model, fields, skip);
+      const inserted = await q.execute(insert.sql, insert.params(values));
+      if (!inserted) continue;
+      const identityCol = columnFields(model).find((f) => f.default?.kind === "autoincrement" && values[f.name] === undefined);
+      if (identityCol) {
+        const [r] = await q.query<Row>(`SELECT CURRENT_IDENTITY_VALUE() AS "id" FROM DUMMY`);
+        values[identityCol.name] = decodeValue(this.contract, identityCol, r?.id);
+      }
+      keys.push(this.identity(model, values));
+    }
+    if (!keys.length) return [];
+    // Read back in chunks; the extra key fields are needed to restore the input order.
+    const keyFields = Object.keys(keys[0]!);
+    const hidden = new Set<string>();
+    let select = args.select as Row | undefined;
+    if (select) {
+      select = { ...select };
+      for (const f of keyFields) if (!select[f]) (select[f] = true), hidden.add(f);
+    }
+    let omit = args.omit as Row | undefined;
+    if (omit) {
+      omit = { ...omit };
+      for (const f of keyFields) if (omit[f]) (delete omit[f], hidden.add(f));
+    }
+    const byKey = new Map<string, Row>();
+    const keyOf = (r: Row) => JSON.stringify(keyFields.map((f) => normalizeKey(r[f])));
+    for (let i = 0; i < keys.length; i += CREATE_MANY_READ_CHUNK) {
+      const chunk = keys.slice(i, i + CREATE_MANY_READ_CHUNK);
+      const rows = await this.findMany(model, { where: { OR: chunk }, select, include: args.include, omit }, q);
+      for (const r of rows) byKey.set(keyOf(r), r);
+    }
+    const out: Row[] = [];
+    for (const k of keys) {
+      const row = byKey.get(keyOf(k));
+      if (!row) throw new NotFoundError(model.name, `A '${model.name}' record was written but could not be read back`);
+      out.push(row);
+    }
+    return strip(out, hidden);
+  }
+
+  private async createManyRaw(model: ModelDef, rows: Row[], q: Queryable, skipDuplicates = false): Promise<number> {
     this.assertWritable(model);
     const cols = columnFields(model);
-    const groups = new Map<string, { fields: ColumnFieldDef[]; rows: unknown[][] }>();
+    const groups = new Map<string, { fields: ColumnFieldDef[]; rows: Row[] }>();
     for (const data of rows) {
-      const values: Row = {};
-      for (const [k, v] of Object.entries(data)) {
-        if (v === undefined) continue;
-        const f = getField(model, k);
-        if (!f) throw new ValidationError(`Unknown field '${k}' in data for '${model.name}'`);
-        if (f.kind === "relation") throw new ValidationError(`createMany does not support relation '${k}'; set its foreign key fields`);
-        values[k] = v;
-      }
-      for (const f of cols) {
-        if (values[f.name] === undefined) {
-          const d = this.clientDefault(f);
-          if (d !== undefined) values[f.name] = d;
-        }
-        const generated = f.default?.kind === "autoincrement" || f.default?.kind === "dbgenerated";
-        if (values[f.name] === undefined && !f.optional && !generated) throw new ValidationError(`Missing required field '${f.name}' in createMany of '${model.name}'`);
-      }
+      const values = this.createManyValues(model, data, "createMany");
       const fields = cols.filter((f) => values[f.name] !== undefined);
       const sig = fields.map((f) => f.name).join(",");
       const group = groups.get(sig) ?? { fields, rows: [] };
-      group.rows.push(fields.map((f) => encodeValue(this.contract, f, values[f.name])));
+      group.rows.push(values);
       groups.set(sig, group);
     }
     let count = 0;
     for (const g of groups.values()) {
-      const sql = `INSERT INTO ${this.table(model)} (${g.fields.map((f) => quoteIdent(f.dbName)).join(", ")}) VALUES (${g.fields.map(() => "?").join(", ")})`;
-      await q.executeBatch(sql, g.rows);
-      count += g.rows.length;
+      const insert = this.createManyInsert(model, g.fields, skipDuplicates);
+      count += await q.executeBatch(insert.sql, g.rows.map(insert.params));
     }
     return count;
   }
+
+  /** Validated column values of one createMany row, with client-side defaults applied. */
+  private createManyValues(model: ModelDef, data: Row, op: string): Row {
+    this.assertWritable(model);
+    if (!isPlainObject(data)) throw new ValidationError(`${op} on '${model.name}' needs 'data' objects`);
+    const values: Row = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined) continue;
+      const f = getField(model, k);
+      if (!f) throw new ValidationError(`Unknown field '${k}' in data for '${model.name}'`);
+      if (f.kind === "relation") throw new ValidationError(`${op} does not support relation '${k}'; set its foreign key fields`);
+      values[k] = v;
+    }
+    for (const f of columnFields(model)) {
+      if (values[f.name] === undefined) {
+        const d = this.clientDefault(f);
+        if (d !== undefined) values[f.name] = d;
+      }
+      const generated = f.default?.kind === "autoincrement" || f.default?.kind === "dbgenerated";
+      if (values[f.name] === undefined && !f.optional && !generated) throw new ValidationError(`Missing required field '${f.name}' in ${op} of '${model.name}'`);
+    }
+    return values;
+  }
+
+  /**
+   * INSERT statement for rows that set exactly `fields`. With `skipDuplicates` it becomes
+   * `INSERT ... SELECT ... FROM DUMMY WHERE NOT EXISTS (...)` over the primary key and every
+   * unique whose fields are all set, so a row that matches an existing row (or one inserted
+   * earlier in the same batch) is skipped instead of failing.
+   */
+  private createManyInsert(model: ModelDef, fields: ColumnFieldDef[], skipDuplicates: boolean): { sql: string; params: (values: Row) => unknown[] } {
+    const table = this.table(model);
+    const cols = fields.map((f) => quoteIdent(f.dbName)).join(", ");
+    const marks = fields.map(() => "?").join(", ");
+    const encode = (values: Row) => fields.map((f) => encodeValue(this.contract, f, values[f.name]));
+    const set = new Set(fields.map((f) => f.name));
+    const keys = skipDuplicates
+      ? [model.primaryKey?.fields, ...model.uniques.map((u) => u.fields)].filter((k): k is string[] => !!k?.length && k.every((f) => set.has(f)))
+      : [];
+    if (!keys.length) return { sql: `INSERT INTO ${table} (${cols}) VALUES (${marks})`, params: encode };
+    const keyFields = keys.map((k) => k.map((name) => this.column(model, name)));
+    const cond = keyFields.map((k) => `(${k.map((f) => `${quoteIdent(f.dbName)} = ?`).join(" AND ")})`).join(" OR ");
+    return {
+      sql: `INSERT INTO ${table} (${cols}) SELECT ${marks} FROM DUMMY WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ${cond})`,
+      params: (values) => [...encode(values), ...keyFields.flat().map((f) => encodeValue(this.contract, f, values[f.name]))],
+    };
+  }
+}
+
+/** Rows are read back in chunks of this many keys (one OR condition per key). */
+const CREATE_MANY_READ_CHUNK = 500;
+
+function normalizeKey(v: unknown): unknown {
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === "bigint") return v.toString();
+  if (Buffer.isBuffer(v)) return v.toString("hex");
+  return v;
 }
 
 function strip(rows: Row[], hidden: Set<string>): Row[] {

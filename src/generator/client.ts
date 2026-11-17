@@ -200,6 +200,12 @@ function modelTypes(contract: Contract, m: ModelDef): string {
     "",
   );
 
+  // Nested createMany rows: the foreign key back to the parent is filled in by the runtime.
+  const nestedMany = (r: RelationFieldDef) => {
+    const keys = r.targetFields.map((f) => JSON.stringify(f)).join(" | ");
+    return keys ? `$r.OptionalKeys<${r.model}CreateManyInput, ${keys}>` : `${r.model}CreateManyInput`;
+  };
+
   // create / update inputs
   if (!readOnly || m.kind !== "view") {
     L.push(`export type ${M}CreateInput = {`);
@@ -211,7 +217,7 @@ function modelTypes(contract: Contract, m: ModelDef): string {
       const T = r.model;
       if (r.list) {
         L.push(
-          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; createMany?: { data: ${T}CreateManyInput | ${T}CreateManyInput[] }; connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[] };`,
+          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; createMany?: { data: ${nestedMany(r)} | ${nestedMany(r)}[]; skipDuplicates?: boolean }; connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[] };`,
         );
       } else {
         L.push(`  ${r.name}?: { create?: ${T}CreateInput; connect?: ${T}WhereUniqueInput; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } };`);
@@ -238,7 +244,7 @@ function modelTypes(contract: Contract, m: ModelDef): string {
       const T = r.model;
       if (r.list) {
         L.push(
-          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; createMany?: { data: ${T}CreateManyInput | ${T}CreateManyInput[] }; connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[]; set?: ${T}WhereUniqueInput[]; disconnect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; delete?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; deleteMany?: ${T}WhereInput | ${T}WhereInput[]; update?: { where: ${T}WhereUniqueInput; data: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; data: ${T}UpdateInput }[]; updateMany?: { where: ${T}WhereInput; data: ${T}UpdateManyInput } | { where: ${T}WhereInput; data: ${T}UpdateManyInput }[]; upsert?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput }[] };`,
+          `  ${r.name}?: { create?: ${T}CreateInput | ${T}CreateInput[]; createMany?: { data: ${nestedMany(r)} | ${nestedMany(r)}[]; skipDuplicates?: boolean }; connect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; connectOrCreate?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput }[]; set?: ${T}WhereUniqueInput[]; disconnect?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; delete?: ${T}WhereUniqueInput | ${T}WhereUniqueInput[]; deleteMany?: ${T}WhereInput | ${T}WhereInput[]; update?: { where: ${T}WhereUniqueInput; data: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; data: ${T}UpdateInput }[]; updateMany?: { where: ${T}WhereInput; data: ${T}UpdateManyInput } | { where: ${T}WhereInput; data: ${T}UpdateManyInput }[]; upsert?: { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput } | { where: ${T}WhereUniqueInput; create: ${T}CreateInput; update: ${T}UpdateInput }[] };`,
         );
       } else {
         L.push(
@@ -261,7 +267,8 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   L.push(`  groupBy<A extends ${M}GroupByArgs>(args: A): Promise<$r.GroupByPayload<${M}, A>[]>;`);
   if (m.kind !== "view") {
     L.push(`  create<A extends { data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }>(args: A): Promise<${M}GetPayload<A, G>>;`);
-    L.push(`  createMany(args: { data: ${M}CreateManyInput | ${M}CreateManyInput[] }): Promise<$r.BatchPayload>;`);
+    L.push(`  createMany(args: { data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean }): Promise<$r.BatchPayload>;`);
+    L.push(`  createManyAndReturn<A extends { data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }>(args: A): Promise<${M}GetPayload<A, G>[]>;`);
     L.push(`  updateMany(args: { where?: ${M}WhereInput; data: ${M}UpdateManyInput }): Promise<$r.BatchPayload>;`);
     L.push(`  deleteMany(args?: { where?: ${M}WhereInput }): Promise<$r.BatchPayload>;`);
     if (!readOnly) {

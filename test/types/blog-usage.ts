@@ -29,6 +29,15 @@ async function checks() {
   expectType<Equal<typeof u.visits, bigint>>();
   expectType<Equal<typeof u.balance, string>>();
 
+  const many = await db.user.createManyAndReturn({ data: [{ email: "a@b.c" }], skipDuplicates: true, select: { id: true, email: true } });
+  expectType<Equal<typeof many, { id: number; email: string }[]>>();
+  const withPosts = await db.user.createManyAndReturn({ data: { email: "b@c.d" }, include: { posts: true } });
+  expectType<Equal<(typeof withPosts)[number]["posts"][number]["title"], string>>();
+  // nested createMany rows leave out the foreign key to the parent
+  await db.user.create({ data: { email: "c@d.e", posts: { createMany: { data: [{ title: "x" }], skipDuplicates: true } } } });
+  // @ts-expect-error createMany has no select
+  await db.user.createMany({ data: [{ email: "x@y.z" }], select: { id: true } });
+
   await db.user.update({ where: { id: 1 }, data: { visits: { increment: 1 }, posts: { updateMany: { where: { published: false }, data: { published: true } } } } });
   await db.postTag.findUnique({ where: { postId_tagName: { postId: 1, tagName: "x" } } });
 
