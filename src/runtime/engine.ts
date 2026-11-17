@@ -12,7 +12,7 @@ import { decodeValue, encodeValue } from "./codec.ts";
 import type { Queryable } from "./driver.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
 import { quoteIdent, tableRef } from "./sql.ts";
-import { buildWhere, compoundKey, isPlainObject, joinCondition, SqlContext } from "./where.ts";
+import { buildWhere, compoundKey, isPlainObject, joinCondition, scalarCondition, SqlContext } from "./where.ts";
 
 type Row = Record<string, unknown>;
 type Args = Record<string, unknown>;
@@ -50,6 +50,10 @@ function keyString(values: unknown[]): string | null {
     else parts.push(`${typeof v === "bigint" || typeof v === "number" ? "n" : typeof v}:${String(v)}`);
   }
   return parts.join("\u0001");
+}
+
+function isNumericField(f: ColumnFieldDef): boolean {
+  return f.kind === "scalar" && ["Int", "BigInt", "Float", "Decimal"].includes(f.type);
 }
 
 function cuid(): string {
@@ -423,16 +427,17 @@ export class Engine {
   async groupBy(model: ModelDef, args: Args, q: Queryable): Promise<Row[]> {
     const by = toArray(args.by as string | string[]);
     if (!by.length) throw new ValidationError(`groupBy on '${model.name}' needs 'by'`);
-    if (args.having !== undefined) throw new ValidationError(`'having' is not supported yet`);
     const ctx = new SqlContext();
     const alias = ctx.alias();
     const byFields = by.map((b) => this.column(model, b));
     const { exprs, decode } = this.aggregateExprs(model, args, alias);
     const cols = [...byFields.map((f) => `${alias}.${quoteIdent(f.dbName)} AS ${quoteIdent(f.name)}`), ...exprs];
     const where = buildWhere(this, model, args.where, alias, ctx);
+    const having = this.buildHaving(model, args.having, by, alias, ctx);
     const order = this.orderItems(model, args.orderBy, alias);
     for (const o of order) if (!by.includes(o.field.name)) throw new ValidationError(`orderBy '${o.field.name}' must be one of the 'by' fields`);
     let sql = `SELECT ${cols.join(", ")} FROM ${this.table(model)} ${alias}${where ? ` WHERE ${where}` : ""} GROUP BY ${byFields.map((f) => `${alias}.${quoteIdent(f.dbName)}`).join(", ")}`;
+    if (having) sql += ` HAVING ${having}`;
     if (order.length) sql += ` ORDER BY ${order.map((o) => `${o.sql} ${o.desc ? "DESC" : "ASC"}`).join(", ")}`;
     if (args.take !== undefined || args.skip !== undefined) sql += ` LIMIT ${args.take === undefined ? MAX_LIMIT : nonNegativeInt(args.take, "take")}${args.skip ? ` OFFSET ${nonNegativeInt(args.skip, "skip")}` : ""}`;
     const rows = await q.query<Row>(sql, ctx.params);
@@ -441,6 +446,54 @@ export class Engine {
       for (const f of byFields) out[f.name] = decodeValue(this.contract, f, r[f.name]);
       return { ...out, ...decode(r) };
     });
+  }
+
+  /**
+   * `HAVING` condition of a groupBy: filters on `by` fields plus aggregate filters
+   * (`_count: { _all: { gt: 1 } }`, `_sum: { total: { gte: 10 } }`, ...), combined with AND/OR/NOT.
+   */
+  private buildHaving(model: ModelDef, having: unknown, by: string[], alias: string, ctx: SqlContext): string | null {
+    if (having === undefined || having === null) return null;
+    if (!isPlainObject(having)) throw new ValidationError(`'having' on '${model.name}' must be an object`);
+    const parts: string[] = [];
+    const nested = (v: unknown) => toArray(v as Row | Row[]).map((h) => this.buildHaving(model, h, by, alias, ctx));
+    for (const [key, value] of Object.entries(having)) {
+      if (value === undefined) continue;
+      if (key === "AND" || key === "NOT") {
+        const sub = nested(value).filter((s): s is string => s !== null);
+        if (sub.length) parts.push(`${key === "NOT" ? "NOT " : ""}(${sub.map((s) => `(${s})`).join(" AND ")})`);
+      } else if (key === "OR") {
+        const sub = nested(value);
+        parts.push(sub.length ? `(${sub.map((s) => `(${s ?? "1 = 1"})`).join(" OR ")})` : "1 = 0");
+      } else if (key === "_count" || key === "_sum" || key === "_avg" || key === "_min" || key === "_max") {
+        if (!isPlainObject(value)) throw new ValidationError(`having.${key} on '${model.name}' must be an object of field filters`);
+        for (const [name, filter] of Object.entries(value)) {
+          if (filter === undefined) continue;
+          const cond = this.aggregateCondition(model, key, name, filter, alias, ctx);
+          if (cond) parts.push(cond);
+        }
+      } else {
+        const f = this.column(model, key);
+        if (!by.includes(f.name)) throw new ValidationError(`having.${key} on '${model.name}' must be one of the 'by' fields or use an aggregate (_count, _sum, _avg, _min, _max)`);
+        const cond = scalarCondition(this, f, `${alias}.${quoteIdent(f.dbName)}`, value, ctx);
+        if (cond) parts.push(cond);
+      }
+    }
+    if (!parts.length) return null;
+    return parts.length === 1 ? parts[0]! : parts.map((p) => `(${p})`).join(" AND ");
+  }
+
+  private aggregateCondition(model: ModelDef, op: "_count" | "_sum" | "_avg" | "_min" | "_max", name: string, filter: unknown, alias: string, ctx: SqlContext): string | null {
+    const synthetic = (type: "Int" | "Float"): ColumnFieldDef => ({ kind: "scalar", name: `${op}.${name}`, dbName: "", type, optional: true, id: false, unique: false, updatedAt: false });
+    if (op === "_count") {
+      if (name === "_all") return scalarCondition(this, synthetic("Int"), "COUNT(*)", filter, ctx);
+      const f = this.column(model, name);
+      return scalarCondition(this, synthetic("Int"), `COUNT(${alias}.${quoteIdent(f.dbName)})`, filter, ctx);
+    }
+    const f = this.column(model, name);
+    if ((op === "_sum" || op === "_avg") && !isNumericField(f)) throw new ValidationError(`having.${op} needs numeric fields; '${f.name}' is not numeric`);
+    const expr = `${op.slice(1).toUpperCase()}(${alias}.${quoteIdent(f.dbName)})`;
+    return scalarCondition(this, op === "_avg" ? synthetic("Float") : f, expr, filter, ctx);
   }
 
   private aggregateExprs(model: ModelDef, args: Args, alias: string): { exprs: string[]; decode: (r: Row) => Row } {

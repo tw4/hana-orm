@@ -154,3 +154,13 @@ test("omit leaves fields out of results", { skip: !enabled }, async () => {
   assert.deepEqual(Object.keys(rows[0]!).sort(), ["email", "id", "name", "orders", "vip"]);
   assert.deepEqual(Object.keys(rows[0]!.orders[0]!).sort(), ["customerId", "id", "status", "total"]);
 });
+
+test("groupBy having filters groups by aggregates", { skip: !enabled }, async () => {
+  const many = await db.order.groupBy({ by: ["customerId"], _count: { _all: true }, having: { _count: { _all: { gt: 1 } } } });
+  assert.equal(many.length, 1);
+  assert.equal(many[0]!._count._all, 2);
+  const big = await db.order.groupBy({ by: ["status"], _sum: { total: true }, having: { _sum: { total: { gte: 50 } }, status: { not: Status.DONE } } });
+  assert.deepEqual(big, [{ status: "OPEN", _sum: { total: 111.5 } }]);
+  const avg = await db.order.groupBy({ by: ["customerId"], having: { OR: [{ _avg: { total: { lt: 8 } } }, { _max: { total: { gt: 90 } } }] }, orderBy: { customerId: "asc" } });
+  assert.equal(avg.length, 2);
+});

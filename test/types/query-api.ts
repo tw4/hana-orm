@@ -44,3 +44,19 @@ async function omitChecks() {
   new HanaClient({ omit: { user: { nope: true } } });
 }
 void omitChecks;
+
+async function havingChecks() {
+  const groups = await db.user.groupBy({
+    by: ["role"],
+    _count: { _all: true },
+    having: { role: "ADMIN", _count: { _all: { gt: 1 } }, _sum: { visits: { gte: 10n } }, _avg: { balance: { lt: 2 } }, _max: { createdAt: { gt: new Date() } } },
+  });
+  expectType<Equal<(typeof groups)[number], { role: User["role"]; _count: { _all: number } }>>();
+  await db.post.groupBy({ by: ["authorId"], having: { OR: [{ _count: { id: 2 } }, { NOT: { _min: { title: "a" } } }] } });
+
+  // @ts-expect-error _sum only takes numeric fields
+  await db.user.groupBy({ by: ["role"], having: { _sum: { email: { gt: "a" } } } });
+  // @ts-expect-error counts compare with numbers
+  await db.user.groupBy({ by: ["role"], having: { _count: { _all: { gt: "1" } } } });
+}
+void havingChecks;
