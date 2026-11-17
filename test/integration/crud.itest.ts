@@ -112,7 +112,7 @@ test("transactions commit and roll back", { skip: !enabled }, async () => {
   assert.equal(await db.customer.count(), before + 1);
 });
 
-test("unique violations surface as DatabaseError with a stable code", { skip: "needs a test schema: temporary tables cannot have unique constraints" }, async () => {
+test("unique violations surface as DatabaseError with a stable code", { skip: "temporary tables cannot have unique constraints; covered by migrate.itest.ts" }, async () => {
   await assert.rejects(db.customer.create({ data: { email: "ada@example.com" } }), (e: unknown) => e instanceof DatabaseError && e.code === "UNIQUE_CONSTRAINT");
 });
 

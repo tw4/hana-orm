@@ -381,7 +381,11 @@ export async function migrateStatus(_args: ParsedArgs, ctx: CliContext): Promise
       const contract = await ctx.loadContract();
       const latest = migrations.at(-1);
       const unplanned = await planBetween(latest ? await readSnapshot(latest) : null, contract, await ctx.defaultSchema());
-      if (unplanned.length) ctx.log(`The schema has ${unplanned.length} change(s) without a migration; run \`hana-orm migrate plan --name <name>\`.`);
+      if (unplanned.length) {
+        // Fail so CI notices a schema change that was committed without its migration.
+        ok = false;
+        ctx.warn(`The schema has ${unplanned.length} change(s) without a migration; run \`hana-orm migrate plan --name <name>\`.`);
+      }
     } catch (e) {
       ctx.warn(`Could not load the schema: ${(e as Error).message}`);
     }
