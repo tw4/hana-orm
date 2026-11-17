@@ -164,3 +164,17 @@ test("groupBy having filters groups by aggregates", { skip: !enabled }, async ()
   const avg = await db.order.groupBy({ by: ["customerId"], having: { OR: [{ _avg: { total: { lt: 8 } } }, { _max: { total: { gt: 90 } } }] }, orderBy: { customerId: "asc" } });
   assert.equal(avg.length, 2);
 });
+
+test("distinct returns one row per value with both strategies", { skip: !enabled }, async () => {
+  const statuses = await db.order.findMany({ distinct: ["status"], select: { status: true }, orderBy: { status: "asc" } });
+  assert.deepEqual(statuses, [{ status: "OPEN" }, { status: "DONE" }]);
+  const firstPerCustomer = await db.order.findMany({ distinct: "customerId", orderBy: { total: { sort: "desc", nulls: "last" } }, select: { customerId: true, total: true } });
+  assert.deepEqual(firstPerCustomer.map((o) => o.total), [99, 12.5]);
+  const paged = await db.order.findMany({ distinct: "customerId", orderBy: { total: "asc" }, take: 1, skip: 1, select: { total: true } });
+  assert.deepEqual(paged, [{ total: 99 }]);
+  const nested = await db.customer.findMany({ where: { orders: { some: {} } }, orderBy: { email: "asc" }, select: { email: true, orders: { distinct: ["customerId"], orderBy: { total: "asc" }, select: { total: true } } } });
+  assert.deepEqual(nested, [
+    { email: "ada@example.com", orders: [{ total: 3 }] },
+    { email: "bob@example.com", orders: [{ total: 99 }] },
+  ]);
+});

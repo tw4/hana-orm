@@ -35,6 +35,19 @@ interface SelectOptions {
   extraColumns?: string[];
   /** Ignore `omit` defaults (inner selects of aggregates). */
   allColumns?: boolean;
+  /** Fields added to `distinct` (the relation key, so nested `distinct` works per parent). */
+  distinctScope?: string[];
+}
+
+interface OrderItem {
+  field: ColumnFieldDef;
+  sql: string;
+  desc: boolean;
+  nulls?: "first" | "last";
+}
+
+function orderSql(items: OrderItem[]): string {
+  return items.map((o) => `${o.sql} ${o.desc ? "DESC" : "ASC"}${o.nulls ? ` NULLS ${o.nulls.toUpperCase()}` : ""}`).join(", ");
 }
 
 function toArray<T>(v: T | T[] | undefined): T[] {
@@ -222,8 +235,15 @@ export class Engine {
   }
 
   /** ORDER BY items as [column SQL, direction, nulls]. */
-  private orderItems(model: ModelDef, orderBy: unknown, alias: string): { field: ColumnFieldDef; sql: string; desc: boolean; nulls?: "first" | "last" }[] {
-    const items: { field: ColumnFieldDef; sql: string; desc: boolean; nulls?: "first" | "last" }[] = [];
+  private distinctFields(model: ModelDef, distinct: unknown): ColumnFieldDef[] {
+    if (distinct === undefined || distinct === null) return [];
+    const names = toArray(distinct as string | string[]);
+    if (!names.every((n) => typeof n === "string")) throw new ValidationError(`'distinct' on '${model.name}' must be a field name or an array of field names`);
+    return [...new Set(names)].map((n) => this.column(model, n));
+  }
+
+  private orderItems(model: ModelDef, orderBy: unknown, alias: string): OrderItem[] {
+    const items: OrderItem[] = [];
     for (const o of toArray(orderBy as Row | Row[])) {
       if (!isPlainObject(o)) throw new ValidationError(`orderBy on '${model.name}' must be an object or array of objects`);
       for (const [key, v] of Object.entries(o)) {
@@ -263,26 +283,48 @@ export class Engine {
     const reverse = take !== undefined && take < 0;
     if (reverse) take = -take!;
 
+    // distinct: one row per combination of these fields (plus the relation key when loading a relation).
+    const distinct = this.distinctFields(model, args.distinct);
+    if (distinct.length) for (const name of options.distinctScope ?? []) if (!distinct.some((d) => d.name === name)) distinct.push(this.column(model, name));
+
     let order = this.orderItems(model, args.orderBy, alias);
+    const requestedOrder = [...order];
     const needsStableOrder = paging && (take !== undefined || skip !== undefined || args.cursor !== undefined);
-    if (needsStableOrder && model.primaryKey) {
-      for (const pk of model.primaryKey.fields) {
-        if (!order.some((o) => o.field.name === pk)) {
-          const f = this.column(model, pk);
-          order.push({ field: f, sql: `${alias}.${quoteIdent(f.dbName)}`, desc: false });
-        }
+    // After `distinct` the distinct fields identify a row, so they make the order total; otherwise the primary key does.
+    const tieBreakers = distinct.length ? distinct : (model.primaryKey?.fields ?? []).map((pk) => this.column(model, pk));
+    if (needsStableOrder) {
+      for (const f of tieBreakers) {
+        if (!order.some((o) => o.field.name === f.name)) order.push({ field: f, sql: `${alias}.${quoteIdent(f.dbName)}`, desc: false });
       }
     }
     if (reverse) order = order.map((o) => ({ ...o, desc: !o.desc, ...(o.nulls ? { nulls: o.nulls === "first" ? "last" : "first" } : {}) }));
 
     const conds: string[] = [];
     const where = buildWhere(this, model, args.where, alias, ctx);
-    if (where) conds.push(where);
+    let from = `${this.table(model)} ${alias}`;
+    let selectDistinct = false;
+    if (distinct.length) {
+      const names = new Set(distinct.map((d) => d.name));
+      const plain = !sel.counts.length && sel.columns.every((c) => names.has(c.name)) && order.every((o) => names.has(o.field.name));
+      if (plain) {
+        // Every returned column is a distinct field: SELECT DISTINCT is enough.
+        selectDistinct = true;
+        if (where) conds.push(where);
+      } else {
+        // Keep the first row of each group in the requested order; the outer query reuses the alias,
+        // so ORDER BY, cursor and _count expressions work unchanged on the numbered rows.
+        const partition = distinct.map((d) => `${alias}.${quoteIdent(d.dbName)}`).join(", ");
+        const windowOrder: OrderItem[] = requestedOrder.length ? requestedOrder : (model.primaryKey?.fields ?? []).map((pk) => this.column(model, pk)).map((f) => ({ field: f, sql: `${alias}.${quoteIdent(f.dbName)}`, desc: false }));
+        const over = `PARTITION BY ${partition}${windowOrder.length ? ` ORDER BY ${orderSql(windowOrder)}` : ""}`;
+        from = `(SELECT ${alias}.*, ROW_NUMBER() OVER (${over}) AS "__rn" FROM ${this.table(model)} ${alias}${where ? ` WHERE ${where}` : ""}) ${alias}`;
+        conds.push(`${alias}."__rn" = 1`);
+      }
+    } else if (where) conds.push(where);
     if (args.cursor !== undefined && paging) conds.push(this.cursorCondition(model, args.cursor, order, ctx));
 
-    let sql = `SELECT ${cols.join(", ")} FROM ${this.table(model)} ${alias}`;
+    let sql = `SELECT ${selectDistinct ? "DISTINCT " : ""}${cols.join(", ")} FROM ${from}`;
     if (conds.length) sql += ` WHERE ${conds.length === 1 ? conds[0] : conds.map((c) => `(${c})`).join(" AND ")}`;
-    if (order.length) sql += ` ORDER BY ${order.map((o) => `${o.sql} ${o.desc ? "DESC" : "ASC"}${o.nulls ? ` NULLS ${o.nulls.toUpperCase()}` : ""}`).join(", ")}`;
+    if (order.length) sql += ` ORDER BY ${orderSql(order)}`;
     if (take !== undefined || skip !== undefined) sql += ` LIMIT ${take ?? MAX_LIMIT}${skip ? ` OFFSET ${skip}` : ""}`;
     return { sql, params: ctx.params, sel, reverse };
   }
@@ -357,7 +399,7 @@ export class Engine {
           ? { [rel.targetFields[0]!]: { in: chunk.map((v) => v[0]) } }
           : { OR: chunk.map((v) => Object.fromEntries(rel.targetFields.map((f, j) => [f, v[j]]))) };
       const where = childArgs.where ? { AND: [childArgs.where, keyWhere] } : keyWhere;
-      const res = await this.readMany(target, { ...childArgs, where }, q, { paging: false, extraColumns: rel.targetFields });
+      const res = await this.readMany(target, { ...childArgs, where }, q, { paging: false, extraColumns: rel.targetFields, distinctScope: rel.targetFields });
       hidden = res.hidden;
       for (const row of res.rows) {
         const key = keyString(rel.targetFields.map((f) => row[f]))!;

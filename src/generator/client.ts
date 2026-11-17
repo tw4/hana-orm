@@ -163,6 +163,8 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   L.push(`export type ${M}FindManyArgs = {`);
   L.push(`  where?: ${M}WhereInput;`, `  select?: ${M}Select | null;`, `  include?: ${M}Include | null;`, `  omit?: ${M}Omit | null;`);
   L.push(`  orderBy?: ${M}OrderByInput | ${M}OrderByInput[];`, `  cursor?: ${M}WhereUniqueInput;`, `  take?: number;`, `  skip?: number;`);
+  L.push(`  /** One row per distinct combination of these fields (the first one in \`orderBy\` order). */`);
+  L.push(`  distinct?: ${M}ScalarField | ${M}ScalarField[];`);
   L.push("};");
   L.push(`export type ${M}FindUniqueArgs = { where: ${M}WhereUniqueInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null };`);
   L.push(`export type ${M}CountArgs = { where?: ${M}WhereInput; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number; select?: { _all?: boolean } & { [K in keyof ${M}]?: boolean } };`);

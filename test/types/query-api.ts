@@ -60,3 +60,13 @@ async function havingChecks() {
   await db.user.groupBy({ by: ["role"], having: { _count: { _all: { gt: "1" } } } });
 }
 void havingChecks;
+
+async function distinctChecks() {
+  const roles = await db.user.findMany({ distinct: ["role"], select: { role: true } });
+  expectType<Equal<typeof roles, { role: User["role"] }[]>>();
+  await db.post.findFirst({ distinct: "authorId", include: { tags: { distinct: ["tagName"] } } });
+
+  // @ts-expect-error distinct takes scalar field names
+  await db.user.findMany({ distinct: ["posts"] });
+}
+void distinctChecks;
