@@ -154,3 +154,50 @@ test("distinct inside include is applied per parent", async () => {
   assert.match(driver.calls[3]!.sql, /PARTITION BY t0\."published", t0\."authorId"/);
   await assert.rejects(db.user.findMany({ distinct: ["nope" as "id"] }), /Unknown field 'nope'/);
 });
+
+// ---------------------------------------------------------------------------
+// orderBy relations and aggregates (#2)
+// ---------------------------------------------------------------------------
+
+test("orderBy a to-one relation field uses a correlated subquery", async () => {
+  const { driver, db } = setup();
+  await db.post.findMany({ orderBy: [{ author: { name: { sort: "asc", nulls: "last" } } }, { title: "desc" }], select: { id: true } });
+  assert.equal(
+    driver.calls[0]!.sql,
+    `SELECT t0."id" AS "id" FROM "APP"."Post" t0 ORDER BY (SELECT t1."name" FROM "APP"."USERS" t1 WHERE t1."id" = t0."authorId") ASC NULLS LAST, t0."title" DESC`,
+  );
+});
+
+test("orderBy follows nested to-one relations and back-side relations", async () => {
+  const { driver, db } = setup();
+  await db.profile.findMany({ orderBy: { user: { email: "asc" } }, select: { id: true } });
+  assert.match(driver.calls[0]!.sql, /ORDER BY \(SELECT t1\."email" FROM "APP"\."USERS" t1 WHERE t1\."id" = t0\."userId"\) ASC$/);
+  await db.user.findMany({ orderBy: { profile: { bio: "desc" } }, select: { id: true } });
+  assert.match(driver.calls[1]!.sql, /ORDER BY \(SELECT t1\."bio" FROM "APP"\."Profile" t1 WHERE t1\."userId" = t0\."id"\) DESC$/);
+  await db.postTag.findMany({ orderBy: { post: { author: { email: "asc" } } } });
+  assert.match(driver.calls[2]!.sql, /ORDER BY \(SELECT \(SELECT t2\."email" FROM "APP"\."USERS" t2 WHERE t2\."id" = t1\."authorId"\) FROM "APP"\."Post" t1 WHERE t1\."id" = t0\."postId"\) ASC$/);
+});
+
+test("orderBy relation _count uses a COUNT(*) subquery", async () => {
+  const { driver, db } = setup();
+  await db.user.findMany({ orderBy: { posts: { _count: "desc" } }, select: { id: true } });
+  assert.equal(driver.calls[0]!.sql, `SELECT t0."id" AS "id" FROM "APP"."USERS" t0 ORDER BY (SELECT COUNT(*) FROM "APP"."Post" t1 WHERE t1."authorId" = t0."id") DESC`);
+});
+
+test("relation orderBy works with cursor pagination", async () => {
+  const { driver, db } = setup();
+  await db.user.findMany({ orderBy: { posts: { _count: "desc" } }, cursor: { id: 7 }, take: 3, select: { id: true } });
+  const { sql, params } = driver.calls[0]!;
+  // the cursor row's post count is computed with the same expression
+  assert.match(sql, /\(\(SELECT COUNT\(\*\) FROM "APP"\."Post" t1 WHERE t1\."authorId" = t0\."id"\) < \(SELECT \(SELECT COUNT\(\*\) FROM "APP"\."Post" t\d+ WHERE t\d+\."authorId" = t(\d+)\."id"\) FROM "APP"\."USERS" t\1 WHERE t\1\."id" = \?\)\)/);
+  assert.match(sql, /ORDER BY \(SELECT COUNT\(\*\) FROM "APP"\."Post" t1 WHERE t1\."authorId" = t0\."id"\) DESC, t0\."id" ASC LIMIT 3$/);
+  assert.deepEqual(params, [7, 7, 7, 7, 7]);
+});
+
+test("groupBy orders by aggregates", async () => {
+  const { driver, db } = setup();
+  await db.user.groupBy({ by: ["role"], _count: { _all: true }, orderBy: [{ _count: { _all: "desc" } }, { _sum: { visits: { sort: "asc", nulls: "first" } } }, { role: "asc" }] });
+  assert.match(driver.calls[0]!.sql, /GROUP BY t0\."role" ORDER BY COUNT\(\*\) DESC, SUM\(t0\."visits"\) ASC NULLS FIRST, t0\."role" ASC$/);
+  await assert.rejects(db.user.groupBy({ by: ["role"], orderBy: { email: "asc" } }), /must be one of the 'by' fields or an aggregate/);
+  await assert.rejects(db.user.findMany({ orderBy: { posts: { title: "asc" } } as never }), /order it by \{ _count/);
+});

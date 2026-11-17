@@ -70,3 +70,16 @@ async function distinctChecks() {
   await db.user.findMany({ distinct: ["posts"] });
 }
 void distinctChecks;
+
+async function relationOrderChecks() {
+  await db.post.findMany({ orderBy: [{ author: { name: { sort: "asc", nulls: "last" } } }, { tags: { _count: "desc" } }] });
+  await db.user.findMany({ orderBy: { profile: { bio: "asc" } }, cursor: { id: 1 }, take: 10 });
+  await db.postTag.findMany({ orderBy: { post: { author: { email: "desc" } } } });
+  await db.user.groupBy({ by: ["role"], orderBy: [{ _count: { _all: "desc" } }, { _avg: { balance: "asc" } }, { role: "asc" }] });
+
+  // @ts-expect-error list relations are ordered by _count only
+  await db.user.findMany({ orderBy: { posts: { title: "asc" } } });
+  // @ts-expect-error _sum ordering takes numeric fields
+  await db.user.groupBy({ by: ["role"], orderBy: { _sum: { email: "asc" } } });
+}
+void relationOrderChecks;
