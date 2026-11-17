@@ -133,6 +133,20 @@ npx hana-orm migrate status                  # applied / pending / drift
 - For an existing database: `hana-orm db pull`, then `hana-orm migrate baseline`.
 - For prototyping: `hana-orm db push` applies the schema directly without history.
 
+### Comparing states and running SQL
+
+```sh
+npx hana-orm migrate diff --from migrations --to schema            # what the next migration would do
+npx hana-orm migrate diff --from db --to schema --script           # SQL that brings the database to the schema
+npx hana-orm migrate diff --from empty --to schema --script > init.sql
+npx hana-orm migrate diff --from migrations --to db --exit-code    # exit 2 when the database drifted
+npx hana-orm db execute --file fix.sql                             # run a script in one transaction
+```
+
+A source is `empty`, `schema`, `migrations` (the latest migration), `migrations:<id>` or `db`.
+Against `db`, only the tables the other side defines are compared, so other tables in a shared
+schema are not reported. `migrate diff` never changes the database.
+
 ### Seeding
 
 `hana-orm db seed` runs your seed command with the `.env` file loaded (the schema path is

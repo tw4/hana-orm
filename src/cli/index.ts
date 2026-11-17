@@ -49,7 +49,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 // Flags that never take a value, so `--watch schema.hana` is not misread.
-const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes", "check", "allow-remote", "schema-drop", "skip-seed"]);
+const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes", "check", "allow-remote", "schema-drop", "skip-seed", "script", "ts", "exit-code", "stdin"]);
 
 function normalizeFlags(args: ParsedArgs): ParsedArgs {
   for (const [k, v] of Object.entries(args.flags)) {
