@@ -1,6 +1,6 @@
 # hana-orm
 
-A type-safe TypeScript ORM for **SAP HANA**: a Prisma-like schema, a generated client whose
+A type-safe TypeScript ORM for **SAP HANA**: a declarative schema, a generated client whose
 result types follow your `select`/`include`, and a migrations CLI that produces reviewable SQL.
 
 > Status: **alpha** (`0.1.0-alpha`). APIs may still change. See [ROADMAP.md](ROADMAP.md).
@@ -30,7 +30,7 @@ npx hana-orm generate    # writes the typed client
 
 ### Schema
 
-```prisma
+```hana
 datasource db {
   provider = "hana"
   host     = env("HANA_HOST")

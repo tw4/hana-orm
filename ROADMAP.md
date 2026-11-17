@@ -1,54 +1,38 @@
 # hana-orm Roadmap
 
-A type-safe TypeScript ORM for SAP HANA. The architecture borrows the good parts of
-Prisma 8 (pure TypeScript, emitted contract, migrations as reviewable operations,
-contract-hash markers in the database) and deliberately avoids the problems Prisma 8
-and Prisma 7 users have run into.
+A type-safe TypeScript ORM for SAP HANA: a declarative schema, a generated typed client and
+a migrations CLI whose output is plain, reviewable HANA SQL.
 
 ## Design principles
 
 1. **Pure TypeScript, no native engine.** The only native piece is SAP's own
-   `@sap/hana-client` driver, used as a peer dependency.
-2. **Contract first.** A schema file (`schema.hana`, Prisma-like syntax) is compiled into
-   a `contract.json` plus generated TypeScript types. The contract has a stable hash.
-3. **Familiar query API.** Keep the Prisma 7 style object API (`findMany`, `create`,
-   `include`, nested writes) that people already know. Do not force a rewrite of every
-   query the way Prisma 8's chained API does.
+   `@sap/hana-client` driver, used as a peer dependency. ESM-first, and usable through
+   `require(esm)` on Node 22+; the generated client needs no top-level `await`.
+2. **Contract first.** A schema file (`schema.hana`) is compiled into a contract plus
+   generated TypeScript types. The contract has a stable hash that the database records
+   (`db sign` / `db verify`).
+3. **Object query API.** `findMany`, `create`, `include`, nested writes
+   (`create`, `connect`, `connectOrCreate`, ...), `$transaction` and `$extends`. An SQL-like
+   builder may be added next to it, never instead of it.
 4. **Migrations are data.** Each migration is a list of operations with literal HANA SQL
-   that can be reviewed, plus pre-checks and post-checks.
-5. **HANA-native, not lowest-common-denominator.** Column tables, schemas, identity
-   columns, `NVARCHAR` limits, MDC tenant databases and HANA type quirks are first-class.
-6. **Safe on existing databases.** Large existing schemas with hundreds of tables can be
+   that can be reviewed (`migrate show`), plus pre-checks and post-checks. Planning and
+   applying are separate steps (`migrate plan`, `migrate deploy`).
+5. **No shadow database.** The planner compares contract with contract; drift is checked by
+   reading the live catalog, in any environment (`migrate status`, `db verify`).
+6. **Migrations form a chain.** Each migration records the contract hash it starts from and
+   ends at, so out-of-order or diverged migrations after a branch merge are reported, not
+   applied.
+7. **Predictable types.** One codec per type, covered by tests: `DateTime` → `Date` (UTC),
+   `BigInt` → `bigint`, `Decimal` → string. Paginated queries always emit `LIMIT`/`OFFSET`;
+   parameters are always bound, never inlined.
+8. **HANA-native.** Column tables, schemas, identity columns, `NVARCHAR` limits, MDC tenant
+   databases and HANA type behaviour are first-class.
+9. **Safe on existing databases.** Large existing schemas with hundreds of tables can be
    introspected and baselined without touching data.
-7. **No private data in the repository.** Connection details come only from the
-   environment; tests, fixtures and examples use synthetic schemas and data.
-
-## What we take from Prisma 8
-
-| Prisma 8 idea | hana-orm |
-| --- | --- |
-| Rust engine removed, pure TS/ESM | Same. Runtime is plain TypeScript. |
-| `contract emit` → `contract.json` + `.d.ts` | `hana-orm generate` emits `contract.json` + typed client. |
-| `migration plan` / `db migrate` split | `migrate plan` writes files, `migrate deploy` applies them. |
-| `ops.json` with literal SQL, `migration show` | Same, HANA SQL. |
-| Pre-checks and post-checks per operation | Same; makes operations idempotent and verifiable. |
-| Migrations linked by contract hash (graph) | Same; blocks out-of-order migrations after branch merges. |
-| `db sign` / `db verify` marker | Same; marker table stores the contract hash. |
-| Modular, swappable pieces | Parser, planner, query compiler and driver are separate modules with clear interfaces. |
-
-## What we avoid (known Prisma problems)
-
-| Problem in Prisma 7/8 | Our approach |
-| --- | --- |
-| Prisma 8 removed nested writes, `connectOrCreate`, `$extends`, `db push`, implicit many-to-many | Keep them. Nested writes and extensions are in scope from the first query milestone; `db push` stays for prototyping. |
-| Every query must be rewritten for the new chained API | Object API is the primary API. A fluent builder may be added later on top, never instead. |
-| Pre-release (RC) published under npm `latest` | Pre-releases are published only under `next`. `latest` is always stable. |
-| `DateTime` sometimes returned as strings | One codec layer per type, covered by tests: `DateTime` → `Date`, `BigInt` → `bigint`, `Decimal` → string (or a decimal type), always. |
-| Shadow database needed for `migrate dev` / drift detection only in dev | No shadow database. The planner diffs contract against contract; drift is checked by introspecting the live database, in any environment (`migrate status`, `db verify`). |
-| Cursor pagination generated SQL without `LIMIT` | Every paginated query emits `LIMIT`/`OFFSET`; covered by SQL snapshot tests. |
-| Query compilation on the main thread caused event loop contention | Query plans are cached per query shape; parameters are bound, never inlined. |
-| ESM/CJS and top-level `await` friction | ESM-first package that also works through `require(esm)` on Node 22+. Generated client needs no top-level `await`. |
-| Breaking changes without upgrade path | Semver; every breaking change ships with a written upgrade note. |
+10. **Stable releases.** Semver; pre-releases are published only under the npm `next` tag,
+    and every breaking change ships with an upgrade note.
+11. **No private data in the repository.** Connection details come only from the
+    environment; tests, fixtures and examples use synthetic schemas and data.
 
 ## Architecture
 
@@ -81,7 +65,7 @@ Package layout (single package first, split later if needed):
   CI, `.env` never committed, no real host names, users or business data in fixtures.
 
 ### M1 – Schema language and contract
-- Prisma-like syntax: `datasource`, `generator`, `model`, `enum`, `@id`, `@@id`, `@unique`,
+- Declarative syntax: `datasource`, `generator`, `model`, `enum`, `@id`, `@@id`, `@unique`,
   `@@unique`, `@@index`, `@default`, `@map`, `@@map`, `@@schema`, `@relation`, `@updatedAt`,
   `@db.*` native types (`@db.NVarChar(255)`, `@db.Decimal(15,2)`, `@db.SecondDate`, …).
 - Validation with line/column error messages.

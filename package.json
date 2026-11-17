@@ -1,7 +1,7 @@
 {
   "name": "hana-orm",
   "version": "0.1.0-alpha.0",
-  "description": "Type-safe TypeScript ORM for SAP HANA with a Prisma-like schema, typed client and migrations CLI",
+  "description": "Type-safe TypeScript ORM for SAP HANA with a declarative schema, typed client and migrations CLI",
   "license": "Apache-2.0",
   "type": "module",
   "repository": {
