@@ -201,3 +201,49 @@ test("groupBy orders by aggregates", async () => {
   await assert.rejects(db.user.groupBy({ by: ["role"], orderBy: { email: "asc" } }), /must be one of the 'by' fields or an aggregate/);
   await assert.rejects(db.user.findMany({ orderBy: { posts: { title: "asc" } } as never }), /order it by \{ _count/);
 });
+
+// ---------------------------------------------------------------------------
+// cursor inside include/select (#6)
+// ---------------------------------------------------------------------------
+
+test("nested cursor is applied in the batched query and paged per parent", async () => {
+  const { driver, db } = setup();
+  driver.respond = (sql) => {
+    if (sql.includes(`FROM "APP"."USERS"`)) return [{ id: 1 }, { id: 2 }];
+    if (sql.includes(`FROM "APP"."Post"`)) {
+      return [
+        { id: 10, title: "b", authorId: 1 },
+        { id: 11, title: "c", authorId: 1 },
+        { id: 12, title: "d", authorId: 1 },
+        { id: 20, title: "b", authorId: 2 },
+        { id: 21, title: "e", authorId: 2 },
+      ];
+    }
+    return [];
+  };
+  const users = await db.user.findMany({ select: { id: true, posts: { cursor: { id: 10 }, skip: 1, take: 1, orderBy: { title: "asc" }, select: { id: true } } } });
+  const { sql, params } = driver.calls[1]!;
+  assert.equal(
+    sql,
+    `SELECT t0."id" AS "id", t0."authorId" AS "authorId" FROM "APP"."Post" t0 WHERE (t0."authorId" IN (?, ?)) AND ((t0."title" > (SELECT t1."title" FROM "APP"."Post" t1 WHERE t1."id" = ?)) OR (t0."title" = (SELECT t2."title" FROM "APP"."Post" t2 WHERE t2."id" = ?) AND t0."id" > (SELECT t3."id" FROM "APP"."Post" t3 WHERE t3."id" = ?)) OR (t0."title" = (SELECT t4."title" FROM "APP"."Post" t4 WHERE t4."id" = ?) AND t0."id" = (SELECT t5."id" FROM "APP"."Post" t5 WHERE t5."id" = ?))) ORDER BY t0."title" ASC, t0."id" ASC`,
+  );
+  assert.deepEqual(params, [1, 2, 10, 10, 10, 10, 10]);
+  assert.deepEqual(users, [
+    { id: 1, posts: [{ id: 11 }] },
+    { id: 2, posts: [{ id: 21 }] },
+  ]);
+});
+
+test("nested cursor with a negative take keeps rows up to the cursor", async () => {
+  const { driver, db } = setup();
+  driver.respond = (sql) => {
+    if (sql.includes(`FROM "APP"."USERS"`)) return [{ id: 1 }];
+    if (sql.includes(`FROM "APP"."Post"`)) return [{ id: 10, authorId: 1 }, { id: 11, authorId: 1 }, { id: 12, authorId: 1 }];
+    return [];
+  };
+  const users = await db.user.findMany({ select: { id: true, posts: { cursor: { id: 12 }, take: -2, select: { id: true } } } });
+  assert.match(driver.calls[1]!.sql, /\(t0\."id" < \(SELECT t1\."id" FROM "APP"\."Post" t1 WHERE t1\."id" = \?\)\)/);
+  assert.match(driver.calls[1]!.sql, /ORDER BY t0\."id" ASC$/);
+  assert.deepEqual(users, [{ id: 1, posts: [{ id: 11 }, { id: 12 }] }]);
+  await assert.rejects(db.post.findMany({ include: { author: { cursor: { id: 1 } } as never } }), /only allowed on list relations/);
+});
