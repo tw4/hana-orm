@@ -20,6 +20,11 @@ export interface TransactionOptions {
    * statements are rolled back on failure. Used by migrations.
    */
   transactionalDdl?: boolean;
+  /**
+   * Milliseconds to wait for a free pooled connection before failing with
+   * `TransactionError` (`TRANSACTION_MAX_WAIT`). Default: wait until one is free.
+   */
+  maxWait?: number;
 }
 
 export interface Driver extends Queryable {

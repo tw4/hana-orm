@@ -55,3 +55,17 @@ export class DatabaseError extends HanaOrmError {
     }
   }
 }
+
+export type TransactionErrorCode = "TRANSACTION_TIMEOUT" | "TRANSACTION_MAX_WAIT" | "TRANSACTION_CLOSED";
+
+/**
+ * A transaction ran longer than `timeout`, no connection was free within `maxWait`, or a
+ * query used a transaction client after its transaction had ended.
+ */
+export class TransactionError extends HanaOrmError {
+  declare readonly code: TransactionErrorCode;
+  constructor(code: TransactionErrorCode, message: string) {
+    super(code, message);
+    this.name = "TransactionError";
+  }
+}

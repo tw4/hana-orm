@@ -47,6 +47,10 @@ async function checks() {
   });
   expectType<Equal<typeof total, number>>();
 
+  const [tagCount, firstUser] = await db.$transaction([db.tag.count(), db.user.findFirst()], { timeout: 1000, maxWait: 500 });
+  expectType<Equal<typeof tagCount, number>>();
+  expectType<Equal<typeof firstUser, User | null>>();
+
   const ext = db.$extends({ model: { user: { byEmail(email: string) { return db.user.findUnique({ where: { email } }); } } } });
   const viaExt = await ext.user.byEmail("x");
   expectType<Equal<typeof viaExt, User | null>>();

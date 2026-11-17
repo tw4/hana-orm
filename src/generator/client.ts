@@ -309,6 +309,8 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   out.push(`  $connect(): Promise<void>;`);
   out.push(`  $disconnect(): Promise<void>;`);
   out.push(`  $transaction<R>(fn: (tx: ${C}Transaction<G>) => Promise<R>, options?: $r.TransactionOptions): Promise<R>;`);
+  out.push(`  /** Runs the queries in order in one transaction. Pass them without awaiting them. */`);
+  out.push(`  $transaction<const P extends readonly Promise<unknown>[]>(queries: P, options?: $r.TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;`);
   out.push(`  $extends<E extends $r.ExtensionArgs>(extension: E): Extended<${C}<G>, E, G>;`);
   out.push("}", "");
   out.push(`type ModelMethods<E, K extends string> = E extends { model: infer MM } ? (MM extends Record<string, unknown> ? (K extends keyof MM ? MM[K] : {}) & ("$allModels" extends keyof MM ? MM["$allModels"] : {}) : {}) : {};`);
