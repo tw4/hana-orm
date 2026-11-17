@@ -28,6 +28,15 @@ interface Selection {
   hidden: Set<string>;
 }
 
+interface SelectOptions {
+  /** Apply take/skip/cursor (false when loading relations in batches). */
+  paging?: boolean;
+  /** Columns fetched in addition to the selection and hidden from the result. */
+  extraColumns?: string[];
+  /** Ignore `omit` defaults (inner selects of aggregates). */
+  allColumns?: boolean;
+}
+
 function toArray<T>(v: T | T[] | undefined): T[] {
   return v === undefined ? [] : Array.isArray(v) ? v : [v];
 }
@@ -53,13 +62,51 @@ function nonNegativeInt(v: unknown, name: string): number {
 }
 
 /** Turns query arguments into SQL and results back into objects. Stateless apart from the contract. */
+export interface EngineOptions {
+  /** Client-wide `omit`, keyed by delegate name (`user`, `post`, ...). */
+  omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+}
+
 export class Engine {
   readonly contract: Contract;
   readonly defaultSchema: string | undefined;
+  /** Client-wide omitted fields per model name. */
+  readonly globalOmit: Map<string, Record<string, boolean | undefined>>;
 
-  constructor(contract: Contract, defaultSchema?: string) {
+  constructor(contract: Contract, defaultSchema?: string, options: EngineOptions = {}) {
     this.contract = contract;
     this.defaultSchema = defaultSchema;
+    this.globalOmit = new Map();
+    for (const [key, value] of Object.entries(options.omit ?? {})) {
+      if (value === undefined) continue;
+      const model = Object.values(contract.models).find((m) => m.name.charAt(0).toLowerCase() + m.name.slice(1) === key);
+      if (!model) throw new ValidationError(`Unknown model '${key}' in the client 'omit' option`);
+      this.validateOmit(model, value);
+      this.globalOmit.set(model.name, value);
+    }
+  }
+
+  private validateOmit(model: ModelDef, omit: unknown): asserts omit is Record<string, boolean | undefined> {
+    if (!isPlainObject(omit)) throw new ValidationError(`'omit' on '${model.name}' must be an object of fields`);
+    for (const [key, v] of Object.entries(omit)) {
+      const f = getField(model, key);
+      if (!f || f.kind === "relation") throw new ValidationError(`Unknown field '${key}' in omit of '${model.name}'; only scalar fields can be omitted`);
+      if (v !== undefined && typeof v !== "boolean") throw new ValidationError(`omit.${key} on '${model.name}' must be true or false`);
+    }
+  }
+
+  /** Fields left out of results: the client-wide default plus the query's `omit` (`false` re-includes a field). */
+  private omittedFields(model: ModelDef, omit: unknown): Set<string> {
+    const out = new Set<string>();
+    for (const [k, v] of Object.entries(this.globalOmit.get(model.name) ?? {})) if (v) out.add(k);
+    if (omit !== undefined && omit !== null) {
+      this.validateOmit(model, omit);
+      for (const [k, v] of Object.entries(omit)) {
+        if (v === true) out.add(k);
+        else if (v === false) out.delete(k);
+      }
+    }
+    return out;
   }
 
   model(name: string): ModelDef {
@@ -95,7 +142,7 @@ export class Engine {
   async findUnique(model: ModelDef, args: Args, q: Queryable): Promise<Row | null> {
     if (!isPlainObject(args?.where)) throw new ValidationError(`findUnique on '${model.name}' needs a 'where' with a unique field`);
     this.assertUniqueWhere(model, args.where);
-    return this.findFirst(model, { where: args.where, select: args.select, include: args.include }, q);
+    return this.findFirst(model, { where: args.where, select: args.select, include: args.include, omit: args.omit }, q);
   }
 
   private assertUniqueWhere(model: ModelDef, where: Row): void {
@@ -113,8 +160,9 @@ export class Engine {
     }
   }
 
-  private resolveSelection(model: ModelDef, args: Args): Selection {
+  private resolveSelection(model: ModelDef, args: Args, options: SelectOptions = {}): Selection {
     if (args.select && args.include) throw new ValidationError(`Use either 'select' or 'include' on '${model.name}', not both`);
+    if (args.select && args.omit) throw new ValidationError(`Use either 'select' or 'omit' on '${model.name}', not both`);
     const sel: Selection = { columns: [], relations: [], counts: [], hidden: new Set() };
     const addRelation = (key: string, value: unknown) => {
       if (key === "_count") {
@@ -138,15 +186,17 @@ export class Engine {
       }
       if (!sel.columns.length && !sel.relations.length && !sel.counts.length) throw new ValidationError(`'select' on '${model.name}' selects nothing`);
     } else {
-      sel.columns = columnFields(model);
+      const omitted = options.allColumns ? new Set<string>() : this.omittedFields(model, args.omit);
+      sel.columns = columnFields(model).filter((f) => !omitted.has(f.name));
+      if (!sel.columns.length) throw new ValidationError(`'omit' on '${model.name}' leaves no fields to return`);
       if (isPlainObject(args.include)) for (const [key, value] of Object.entries(args.include)) if (value) addRelation(key, value);
     }
-    for (const { field } of sel.relations) {
-      for (const lf of field.localFields) {
-        if (!sel.columns.some((c) => c.name === lf)) {
-          sel.columns.push(this.column(model, lf));
-          sel.hidden.add(lf);
-        }
+    // Columns needed to stitch relations together are fetched even when not selected, then removed.
+    const needed = [...sel.relations.flatMap((r) => r.field.localFields), ...(options.extraColumns ?? [])];
+    for (const name of needed) {
+      if (!sel.columns.some((c) => c.name === name)) {
+        sel.columns.push(this.column(model, name));
+        sel.hidden.add(name);
       }
     }
     return sel;
@@ -190,10 +240,10 @@ export class Engine {
    * Builds `SELECT ... FROM ... WHERE ... ORDER BY ... LIMIT` for one model.
    * Returns the SQL, its parameters and the selection.
    */
-  buildSelect(model: ModelDef, args: Args, options: { paging?: boolean } = {}): { sql: string; params: unknown[]; sel: Selection; reverse: boolean } {
+  buildSelect(model: ModelDef, args: Args, options: SelectOptions = {}): { sql: string; params: unknown[]; sel: Selection; reverse: boolean } {
     const ctx = new SqlContext();
     const alias = ctx.alias();
-    const sel = this.resolveSelection(model, args);
+    const sel = this.resolveSelection(model, args, options);
     const paging = options.paging ?? true;
 
     const cols = sel.columns.map((f) => `${alias}.${quoteIdent(f.dbName)} AS ${quoteIdent(f.name)}`);
@@ -264,18 +314,8 @@ export class Engine {
     return row;
   }
 
-  private async readMany(model: ModelDef, args: Args, q: Queryable, options: { paging?: boolean; extraColumns?: string[] } = {}): Promise<{ rows: Row[]; hidden: Set<string> }> {
-    let effective = args;
-    if (options.extraColumns?.length && isPlainObject(args.select)) {
-      const select = { ...args.select };
-      const added: string[] = [];
-      for (const c of options.extraColumns) if (!select[c]) (select[c] = true), added.push(c);
-      effective = { ...args, select };
-      const built = this.buildSelect(model, effective, options);
-      for (const c of added) built.sel.hidden.add(c);
-      return this.execSelect(model, built, args, q);
-    }
-    return this.execSelect(model, this.buildSelect(model, effective, options), args, q);
+  private async readMany(model: ModelDef, args: Args, q: Queryable, options: SelectOptions = {}): Promise<{ rows: Row[]; hidden: Set<string> }> {
+    return this.execSelect(model, this.buildSelect(model, args, options), args, q);
   }
 
   private async execSelect(
@@ -358,7 +398,7 @@ export class Engine {
     let sql: string;
     let params: unknown[];
     if (paged) {
-      const inner = this.buildSelect(model, { where: args.where, orderBy: args.orderBy, take: args.take, skip: args.skip, cursor: args.cursor, select: undefined });
+      const inner = this.buildSelect(model, { where: args.where, orderBy: args.orderBy, take: args.take, skip: args.skip, cursor: args.cursor }, { allColumns: true });
       sql = `SELECT ${counts.join(", ")} FROM (${inner.sql}) ${alias}`;
       params = inner.params;
     } else {
@@ -374,7 +414,7 @@ export class Engine {
   async aggregate(model: ModelDef, args: Args, q: Queryable): Promise<Row> {
     const { exprs, decode } = this.aggregateExprs(model, args, "a");
     if (!exprs.length) throw new ValidationError(`aggregate on '${model.name}' needs at least one of _count, _sum, _avg, _min, _max`);
-    const inner = this.buildSelect(model, { where: args.where, orderBy: args.orderBy, take: args.take, skip: args.skip, cursor: args.cursor });
+    const inner = this.buildSelect(model, { where: args.where, orderBy: args.orderBy, take: args.take, skip: args.skip, cursor: args.cursor }, { allColumns: true });
     const sql = `SELECT ${exprs.join(", ")} FROM (${inner.sql}) "a"`;
     const [row] = await q.query<Row>(sql, inner.params);
     return decode(row ?? {});
@@ -488,7 +528,7 @@ export class Engine {
 
   private async reread(model: ModelDef, values: Row, args: Args, q: Queryable): Promise<Row> {
     const where = this.identity(model, values);
-    const row = await this.findFirst(model, { where, select: args.select, include: args.include }, q);
+    const row = await this.findFirst(model, { where, select: args.select, include: args.include, omit: args.omit }, q);
     if (!row) throw new NotFoundError(model.name, `The '${model.name}' record was written but could not be read back`);
     return row;
   }
@@ -847,7 +887,7 @@ export class Engine {
   async delete(model: ModelDef, args: Args, q: Queryable): Promise<Row> {
     if (!isPlainObject(args.where)) throw new ValidationError(`delete on '${model.name}' needs 'where'`);
     this.assertUniqueWhere(model, args.where);
-    const row = await this.findFirst(model, { where: args.where, select: args.select, include: args.include }, q);
+    const row = await this.findFirst(model, { where: args.where, select: args.select, include: args.include, omit: args.omit }, q);
     const key = await this.locate(model, args.where, q);
     if (!row || !key) throw new NotFoundError(model.name, `No '${model.name}' record found to delete`);
     await this.deleteManyRaw(model, this.identity(model, key), q);
