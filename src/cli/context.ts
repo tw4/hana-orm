@@ -18,6 +18,11 @@ export interface CliContext {
   warn(message: string): void;
   /** Asks a yes/no question; returns `defaultAnswer` when stdin is not a TTY. */
   confirm(question: string, defaultAnswer: boolean): Promise<boolean>;
+  /**
+   * Runs a shell command (seed scripts) and resolves with its exit code. Optional: when
+   * absent the command is spawned through the system shell. Tests replace it.
+   */
+  runCommand?(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<number>;
 }
 
 /** Parsed `--flag value`, `--flag` and positional arguments. */

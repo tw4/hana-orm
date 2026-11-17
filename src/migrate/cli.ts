@@ -14,6 +14,7 @@ import {
   migrateStatus,
   migrateUnlock,
 } from "./commands.ts";
+import { dbSeed } from "./seed.ts";
 
 export const DB_MIGRATE_HELP = `Database commands:
   db pull [--tables A,B] [--exclude X] [--db-schema S] [--views] [--print]
@@ -23,6 +24,9 @@ export const DB_MIGRATE_HELP = `Database commands:
                               Apply the schema directly to the database (no migration history).
   db sign                     Write the schema's contract hash into the database marker.
   db verify                   Check the marker hash and compare tables with the schema (drift).
+  db seed                     Run the seed command with the .env loaded. Configure it as
+                              seed = "node ./seed.ts" in the generator block, or as
+                              "hana-orm": { "seed": "..." } in package.json.
 
 Migration commands:
   migrate plan --name <name> [--allow-destructive] [--empty] [--script]
@@ -46,7 +50,7 @@ Migration commands:
 type Command = (args: ParsedArgs, ctx: CliContext) => Promise<number>;
 
 const COMMANDS: Record<"db" | "migrate", Record<string, Command>> = {
-  db: { pull: dbPull, push: dbPush, sign: dbSign, verify: dbVerify },
+  db: { pull: dbPull, push: dbPush, sign: dbSign, verify: dbVerify, seed: dbSeed },
   migrate: {
     plan: (a, c) => migratePlan(a, c),
     show: migrateShow,

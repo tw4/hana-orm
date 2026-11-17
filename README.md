@@ -133,6 +133,35 @@ npx hana-orm migrate status                  # applied / pending / drift
 - For an existing database: `hana-orm db pull`, then `hana-orm migrate baseline`.
 - For prototyping: `hana-orm db push` applies the schema directly without history.
 
+### Seeding
+
+`hana-orm db seed` runs your seed command with the `.env` file loaded (the schema path is
+passed as `HANA_ORM_SCHEMA`). Configure the command in a generator block:
+
+```
+generator client {
+  provider = "hana-orm"
+  output   = "./src/generated/hana"
+  seed     = "node ./seed.ts"
+}
+```
+
+or in `package.json` as `"hana-orm": { "seed": "node ./seed.ts" }`. A seed script is plain code
+that uses the generated client:
+
+```ts
+// seed.ts
+import { HanaClient } from "./src/generated/hana/index.ts";
+
+const db = new HanaClient();
+await db.user.upsert({
+  where: { email: "demo@example.com" },
+  create: { email: "demo@example.com", name: "Demo" },
+  update: {},
+});
+await db.$disconnect();
+```
+
 ### Formatting and multi-file schemas
 
 ```sh
