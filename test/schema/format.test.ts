@@ -139,6 +139,7 @@ function ctxFor(dir: string, schemaPath: string): CliContext & { logs: string[];
     loadContract: async () => assert.fail("not used"),
     connect: async () => assert.fail("not used"),
     defaultSchema: async () => undefined,
+    connectionHost: async () => "localhost",
     log: (m: string) => void ctx.logs.push(m),
     warn: (m: string) => void ctx.warns.push(m),
     confirm: async () => false,

@@ -162,6 +162,22 @@ await db.user.upsert({
 await db.$disconnect();
 ```
 
+### Resetting a development database
+
+```sh
+npx hana-orm migrate reset            # asks before dropping anything
+npx hana-orm migrate reset --force    # no question (CI, scripts)
+```
+
+`migrate reset` drops the project's tables (every table of every migration and of the schema,
+plus the `_HANA_ORM_*` housekeeping tables), re-applies all migrations and runs the seed command
+(`--skip-seed` to skip it). Tables the project does not know are kept; `--schema-drop` drops
+every table, view and sequence of the schemas the project uses instead.
+
+It is meant for development only: it refuses to run when the connection host is not
+`localhost`, `127.0.0.1` or `::1` unless `--allow-remote` is passed, and without `--force` it
+asks for confirmation (and refuses when it cannot ask, e.g. in a non-interactive shell).
+
 ### Formatting and multi-file schemas
 
 ```sh

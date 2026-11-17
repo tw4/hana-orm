@@ -241,6 +241,30 @@ export default migration;
   rmSync(join(dir, "migrations", broken), { recursive: true, force: true });
 });
 
+test("migrate reset drops the project's tables, re-applies migrations and seeds", { skip }, async () => {
+  await admin.execute(`CREATE COLUMN TABLE "${schemaName}"."UNRELATED" ("ID" INTEGER PRIMARY KEY)`);
+  await admin.execute(`INSERT INTO "${schemaName}"."UNRELATED" VALUES (1)`);
+  const seedScript = join(dir, "seed.mjs");
+  writeFileSync(seedScript, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(join(dir, "seeded.txt"))}, process.env.HANA_ORM_SCHEMA ?? "");\n`);
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ "hana-orm": { seed: `"${process.execPath}" "${seedScript}"` } }));
+
+  assert.equal(await cli("migrate", "reset"), 1, "refuses without --force when it cannot ask");
+  assert.equal((await admin.query(`SELECT 1 FROM "${schemaName}"."ACCOUNTS"`)).length, 1, "nothing was dropped");
+
+  // the earlier "move_audit" migration moves a table into this schema and back
+  await admin.execute(`CREATE SCHEMA "${schemaName}_ARCH"`);
+  try {
+    assert.equal(await cli("migrate", "reset", "--force"), 0);
+  } finally {
+    await admin.execute(`DROP SCHEMA "${schemaName}_ARCH" CASCADE`).catch(() => {});
+  }
+  assert.equal((await admin.query(`SELECT 1 FROM "${schemaName}"."ACCOUNTS"`)).length, 0, "data is gone");
+  assert.equal((await admin.query(`SELECT 1 FROM "${schemaName}"."UNRELATED"`)).length, 1, "tables outside the project are kept");
+  assert.equal(readFileSync(join(dir, "seeded.txt"), "utf8"), schemaFile);
+  assert.equal(await cli("migrate", "status"), 0);
+  rmSync(join(dir, "package.json"));
+});
+
 test("db pull reproduces an equivalent schema", { skip }, async () => {
   const pulledFile = join(dir, "pulled.hana");
   writeFileSync(pulledFile, header);

@@ -15,6 +15,7 @@ import {
   migrateUnlock,
 } from "./commands.ts";
 import { dbSeed } from "./seed.ts";
+import { migrateReset } from "./reset.ts";
 
 export const DB_MIGRATE_HELP = `Database commands:
   db pull [--tables A,B] [--exclude X] [--db-schema S] [--views] [--print]
@@ -45,6 +46,13 @@ Migration commands:
                               Create the first migration from the schema and record it as
                               applied without running it (for existing databases).
   migrate unlock              Release a stale migration lock.
+  migrate reset [--force] [--schema-drop] [--skip-seed] [--allow-remote]
+                              Development only: drop the project's tables (every table of every
+                              migration and the schema, plus the _HANA_ORM_* tables), re-apply all
+                              migrations and run the seed command. --schema-drop drops every table,
+                              view and sequence of the schemas the project uses instead. Asks for
+                              confirmation unless --force; refuses non-local hosts (anything but
+                              localhost, 127.0.0.1, ::1) unless --allow-remote.
 `;
 
 type Command = (args: ParsedArgs, ctx: CliContext) => Promise<number>;
@@ -59,6 +67,7 @@ const COMMANDS: Record<"db" | "migrate", Record<string, Command>> = {
     resolve: migrateResolve,
     baseline: (a, c) => migrateBaseline(a, c),
     unlock: migrateUnlock,
+    reset: migrateReset,
   },
 };
 

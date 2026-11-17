@@ -38,6 +38,9 @@ async function makeCtx(): Promise<TestCtx> {
     async defaultSchema() {
       return undefined;
     },
+    async connectionHost() {
+      return "localhost";
+    },
     log(m) {
       ctx.logs.push(m);
     },

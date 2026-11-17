@@ -49,7 +49,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 // Flags that never take a value, so `--watch schema.hana` is not misread.
-const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes", "check"]);
+const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes", "check", "allow-remote", "schema-drop", "skip-seed"]);
 
 function normalizeFlags(args: ParsedArgs): ParsedArgs {
   for (const [k, v] of Object.entries(args.flags)) {
@@ -97,6 +97,9 @@ function createContext(cwd: string, schemaPath: string): CliContext {
     loadContract,
     async connect() {
       return new HanaDriver(resolveConnectionConfig(await datasource()), { poolSize: 2 });
+    },
+    async connectionHost() {
+      return resolveConnectionConfig(await datasource()).host;
     },
     async defaultSchema() {
       return resolveDefaultSchema(await datasource());
