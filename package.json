@@ -8,7 +8,14 @@
     "type": "git",
     "url": "git+https://github.com/tw4/hana-orm.git"
   },
-  "keywords": ["sap", "hana", "orm", "typescript", "migrations", "query-builder"],
+  "keywords": [
+    "sap",
+    "hana",
+    "orm",
+    "typescript",
+    "migrations",
+    "query-builder"
+  ],
   "engines": {
     "node": ">=22.12"
   },
@@ -23,15 +30,25 @@
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
+    },
+    "./migrate": {
+      "types": "./dist/migrate/index.d.ts",
+      "default": "./dist/migrate/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node test/setup.ts && tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
-    "test:integration": "node --test \"test/integration/**/*.itest.ts\"",
-    "prepare": "npm run build"
+    "test:integration": "node test/setup.ts && node --test \"test/integration/**/*.itest.ts\"",
+    "prepare": "npm run build",
+    "pretest": "node test/setup.ts"
   },
   "peerDependencies": {
     "@sap/hana-client": ">=2.20.0"

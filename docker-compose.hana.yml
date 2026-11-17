@@ -1,0 +1,29 @@
+# Local SAP HANA Express for development and integration tests.
+#
+#   1. Create .local/hxe/password.json: {"master_password":"<8+ chars, upper, lower, digit>"}
+#   2. docker compose -f docker-compose.hana.yml up -d   (first start takes ~10 minutes)
+#   3. Put the connection into .env.test (ignored by git):
+#        HANA_HOST=localhost  HANA_PORT=39041  HANA_USER=SYSTEM  HANA_PASSWORD=...  HANA_DATABASE=HXE
+#   4. HANA_ORM_ENV_FILE=.env.test npm run test:integration
+#
+# Starting the container accepts the SAP HANA Express license (--agree-to-sap-license):
+# https://www.sap.com/about/legal/agreements.html
+services:
+  hana:
+    image: saplabs/hanaexpress:latest
+    container_name: hana-orm-hxe
+    hostname: hxehost
+    command: ["--passwords-url", "file:///hana/mounts/password.json", "--agree-to-sap-license"]
+    ports:
+      - "39013:39013" # SYSTEMDB SQL
+      - "39017:39017"
+      - "39041:39041" # tenant HXE SQL
+    ulimits:
+      nofile: 1048576
+    sysctls:
+      kernel.shmmax: 1073741824
+      net.ipv4.ip_local_port_range: "40000 60999"
+      kernel.shmmni: 4096
+      kernel.shmall: 8388608
+    volumes:
+      - ./.local/hxe:/hana/mounts

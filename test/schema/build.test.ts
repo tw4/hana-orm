@@ -85,3 +85,12 @@ model P {
   const edited = c.models.U!.fields.find((f) => f.name === "edited")!;
   assert.ok(edited.kind === "relation" && edited.targetFields[0] === "eId");
 });
+
+test("keeps Unsupported columns for migrations without exposing them", () => {
+  const c = compileSchema(`model Shape {
+  id Int @id
+  geom Unsupported("ST_GEOMETRY")? @map("GEOM")
+}`);
+  assert.deepEqual(c.models.Shape!.ignoredColumns, [{ name: "geom", dbName: "GEOM", type: "ST_GEOMETRY", optional: true }]);
+  assert.equal(c.models.Shape!.fields.length, 1);
+});

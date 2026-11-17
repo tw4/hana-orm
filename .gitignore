@@ -30,3 +30,6 @@ generated/
 Thumbs.db
 
 # generated test clients
+
+# local database files
+.local/

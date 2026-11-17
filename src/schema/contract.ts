@@ -146,7 +146,20 @@ export interface ModelDef {
   primaryKey: { name: string; dbName: string; fields: string[] } | null;
   uniques: UniqueDef[];
   indexes: IndexDef[];
+  /**
+   * Columns declared as `Unsupported("TYPE")`: not exposed in the client, but kept so
+   * migrations and drift detection know the column exists.
+   */
+  ignoredColumns?: IgnoredColumnDef[];
   doc?: string;
+}
+
+export interface IgnoredColumnDef {
+  name: string;
+  dbName: string;
+  /** Raw HANA type from `Unsupported("...")`, e.g. `ST_GEOMETRY`. */
+  type: string;
+  optional: boolean;
 }
 
 export interface EnumDef {

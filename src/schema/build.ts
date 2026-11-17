@@ -115,7 +115,13 @@ export function buildContract(ast: SchemaAst, options: BuildOptions = {}): Contr
     for (const f of m.fields) {
       if (fieldNames.has(f.name)) err(`Field '${f.name}' is defined more than once in '${m.name}'`, f.pos);
       fieldNames.add(f.name);
-      if (f.unsupported !== undefined) continue; // not exposed in the client
+      if (f.unsupported !== undefined) {
+        // not exposed in the client; kept for migrations and drift detection
+        const mapAttr = findAttr(f.attributes, "map");
+        const dbName = mapAttr ? (stringArg(mapAttr, 0, err) ?? f.name) : f.name;
+        (model.ignoredColumns ??= []).push({ name: f.name, dbName, type: f.unsupported, optional: f.optional });
+        continue;
+      }
       const def = buildField(m, f, typeNames, enums, err);
       if (!def) continue;
       if (def.kind === "relation") {
