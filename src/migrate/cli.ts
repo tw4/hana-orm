@@ -30,7 +30,10 @@ Migration commands:
                               contract.json) from the change since the latest migration.
                               No database connection is needed.
   migrate show [id]           Print the SQL of pending migrations, or of one migration.
-  migrate deploy              Apply pending migrations in order, each in its own transaction.
+  migrate deploy [--wait <seconds>]
+                              Apply pending migrations in order, each in its own transaction.
+                              Waits for a running deploy when --wait is given; a lock without
+                              heartbeat for 2 minutes is taken over automatically.
   migrate status              Show applied, pending, failed and modified migrations and drift.
   migrate resolve --applied <id> | --rolled-back <id>
                               Fix the migration history by hand.

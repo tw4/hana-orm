@@ -171,6 +171,8 @@ export class FakeDriver implements Driver {
   onQuery: QueryHandler = () => [];
   /** Throws when a statement matches. */
   failOn: RegExp | undefined;
+  /** Optional affected-row count for execute(); default 1. */
+  onExecute: ((sql: string, params: readonly unknown[]) => number | undefined) | undefined;
   closed = false;
   private txCounter = 0;
 
@@ -180,7 +182,7 @@ export class FakeDriver implements Driver {
       execute: async (sql: string, params: readonly unknown[] = []): Promise<number> => {
         if (this.failOn?.test(sql)) throw new Error(`fake failure on: ${sql.split("\n")[0]}`);
         this.executed.push({ sql, params, tx });
-        return 1;
+        return this.onExecute?.(sql, params) ?? 1;
       },
       executeBatch: async (sql: string, rows: readonly (readonly unknown[])[]): Promise<number> => {
         for (const r of rows) this.executed.push({ sql, params: r, tx });

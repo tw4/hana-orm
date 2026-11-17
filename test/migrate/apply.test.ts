@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CheckFailedError, computeStatus, deploy, deployBlockers, runOps } from "../../src/migrate/apply.ts";
 import type { LoadedMigration } from "../../src/migrate/files.ts";
-import type { HistoryRecord, HistoryStore, LockInfo, MarkerRecord } from "../../src/migrate/history.ts";
+import type { AcquiredLock, HistoryRecord, HistoryStore, LockInfo, MarkerRecord } from "../../src/migrate/history.ts";
 import { LockError, SqlHistoryStore } from "../../src/migrate/history.ts";
 import type { Queryable } from "../../src/runtime/driver.ts";
 import type { MigrationOp } from "../../src/migrate/ops.ts";
@@ -25,10 +25,16 @@ class MemoryStore implements HistoryStore {
   async hasHistory(): Promise<boolean> {
     return true;
   }
-  async acquireLock(owner: string): Promise<void> {
+  heartbeats = 0;
+  async acquireLock(owner: string): Promise<AcquiredLock> {
     if (this.lock) throw new LockError(this.lock);
     this.lock = { owner, lockedAt: new Date() };
     this.locksTaken.push(owner);
+    return {};
+  }
+  async heartbeat(owner: string): Promise<boolean> {
+    this.heartbeats++;
+    return this.lock?.owner === owner;
   }
   async releaseLock(owner: string): Promise<void> {
     if (this.lock?.owner === owner) this.lock = null;
@@ -219,7 +225,7 @@ test("computeStatus: applied, pending, failed, rolled back, modified, missing, o
 
 test("SqlHistoryStore creates missing housekeeping tables in the given schema", async () => {
   const d = new FakeDriver();
-  d.onQuery = (sql, params) => (sql.includes("SYS.TABLES") && params[1] === "_HANA_ORM_LOCK" ? [{ X: 1 }] : []);
+  d.onQuery = (sql, params) => (sql.includes("SYS.TABLE_COLUMNS") || (sql.includes("SYS.TABLES") && params[1] === "_HANA_ORM_LOCK") ? [{ X: 1 }] : []);
   await new SqlHistoryStore(d, "APP").ensureTables();
   const sql = d.sql();
   assert.equal(sql.length, 2);
@@ -245,6 +251,7 @@ test("SqlHistoryStore writes history and marker with bound parameters", async ()
 test("SqlHistoryStore lock: insert conflict becomes LockError; list parses rows", async () => {
   const d = new FakeDriver();
   d.failOn = /INSERT INTO "_HANA_ORM_LOCK"/;
+  d.onExecute = (sql) => (sql.startsWith('UPDATE "_HANA_ORM_LOCK"') ? 0 : 1);
   d.onQuery = (sql) => {
     if (sql.includes('FROM "_HANA_ORM_LOCK"')) return [{ LOCKED_BY: "h:1:x", LOCKED_AT: "2026-01-01 10:00:00.0000000" }];
     if (sql.includes("SYS.TABLES")) return [{ X: 1 }];
@@ -261,4 +268,57 @@ test("SqlHistoryStore lock: insert conflict becomes LockError; list parses rows"
   const list = await store.list();
   assert.equal(list[0]!.startedAt.toISOString(), "2026-01-01T10:00:00.123Z");
   assert.equal(list[0]!.finishedAt, null);
+});
+
+test("SqlHistoryStore takes over a lock without heartbeat atomically", async () => {
+  const d = new FakeDriver();
+  d.failOn = /INSERT INTO "_HANA_ORM_LOCK"/;
+  d.onQuery = (sql) =>
+    sql.includes('FROM "_HANA_ORM_LOCK"') ? [{ LOCKED_BY: "crashed:9:zz", LOCKED_AT: "2026-01-01 10:00:00.0000000", HEARTBEAT_AT: "2026-01-01 10:00:30.0000000" }] : [];
+  d.onExecute = () => 1;
+  const r = await new SqlHistoryStore(d).acquireLock("me", { staleMs: 120_000 });
+  assert.equal(r.tookOverFrom?.owner, "crashed:9:zz");
+  assert.equal(r.tookOverFrom?.heartbeatAt?.toISOString(), "2026-01-01T10:00:30.000Z");
+  const update = d.executed.find((e) => e.sql.startsWith("UPDATE"))!;
+  assert.match(update.sql, /WHERE "ID" = 1 AND "LOCKED_BY" = \? AND COALESCE\("HEARTBEAT_AT", "LOCKED_AT"\) < ADD_SECONDS\(CURRENT_UTCTIMESTAMP, \?\)$/);
+  assert.deepEqual(update.params, ["me", "crashed:9:zz", -120]);
+});
+
+test("SqlHistoryStore waits for a live lock and then acquires it", async () => {
+  const d = new FakeDriver();
+  let attempts = 0;
+  d.onExecute = (sql) => {
+    if (sql.startsWith('INSERT INTO "_HANA_ORM_LOCK"')) {
+      attempts++;
+      if (attempts < 3) throw new Error("unique constraint violated");
+    }
+    return sql.startsWith('UPDATE "_HANA_ORM_LOCK"') ? 0 : 1;
+  };
+  d.onQuery = (sql) => (sql.includes('FROM "_HANA_ORM_LOCK"') ? [{ LOCKED_BY: "busy:1:aa", LOCKED_AT: "2026-01-01 10:00:00.0000000", HEARTBEAT_AT: null }] : []);
+  const r = await new SqlHistoryStore(d).acquireLock("me", { waitMs: 1000, pollMs: 5 });
+  assert.deepEqual(r, {});
+  assert.equal(attempts, 3);
+});
+
+test("SqlHistoryStore adds HEARTBEAT_AT to a lock table from an earlier version", async () => {
+  const d = new FakeDriver();
+  d.onQuery = (sql) => (sql.includes("SYS.TABLES") ? [{ X: 1 }] : []);
+  await new SqlHistoryStore(d, "APP").ensureTables();
+  assert.deepEqual(d.sql(), ['ALTER TABLE "APP"."_HANA_ORM_LOCK" ADD ("HEARTBEAT_AT" TIMESTAMP)']);
+});
+
+test("deploy stops before the next migration when the lock was taken over", async () => {
+  const d = new FakeDriver();
+  const store = new MemoryStore(d);
+  const origHeartbeat = store.heartbeat.bind(store);
+  let beats = 0;
+  store.heartbeat = async (owner: string) => {
+    beats++;
+    if (beats === 2) store.lock = { owner: "someone-else", lockedAt: new Date() };
+    return origHeartbeat(owner);
+  };
+  const r = await deploy(d, store, chain());
+  assert.deepEqual(r.applied, ["20260101000000_init"]);
+  assert.match(r.blockers[0]!, /Lost the migration lock before applying 20260102000000_posts/);
+  assert.equal(store.lock?.owner, "someone-else", "does not release a lock it no longer owns");
 });

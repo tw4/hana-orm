@@ -2,7 +2,8 @@
  * Housekeeping tables in the datasource default schema:
  *
  * - `_HANA_ORM_MIGRATIONS` – one row per migration (applied, failed, rolled back).
- * - `_HANA_ORM_LOCK`       – a single row while a deploy runs.
+ * - `_HANA_ORM_LOCK`       – a single row while a deploy runs; the owner refreshes
+ *                            `HEARTBEAT_AT` and a lock without heartbeat is taken over.
  * - `_HANA_ORM_MARKER`     – the contract hash the database was last brought to.
  *
  * The planner and applier talk to a `HistoryStore`; `SqlHistoryStore` is the HANA one.
@@ -18,8 +19,10 @@ export const LOCK_TABLE = "_HANA_ORM_LOCK";
 export const MARKER_TABLE = "_HANA_ORM_MARKER";
 export const HOUSEKEEPING_TABLES = [MIGRATIONS_TABLE, LOCK_TABLE, MARKER_TABLE] as const;
 
-/** A lock older than this is reported as possibly stale. */
-export const STALE_LOCK_MS = 15 * 60 * 1000;
+/** How often a running deploy refreshes its lock. */
+export const LOCK_HEARTBEAT_MS = 20 * 1000;
+/** A lock whose heartbeat is older than this is stale: its owner crashed or hung, so it is taken over. */
+export const STALE_LOCK_MS = 2 * 60 * 1000;
 
 export type HistoryStatus = "applied" | "failed" | "rolled_back";
 
@@ -44,18 +47,34 @@ export interface MarkerRecord {
 export interface LockInfo {
   owner: string;
   lockedAt: Date;
+  /** Last heartbeat of the owner; absent for locks written by older versions. */
+  heartbeatAt?: Date;
+}
+
+export interface AcquireLockOptions {
+  /** Keep retrying this long while another deploy holds a live lock (default 0: fail at once). */
+  waitMs?: number;
+  /** A lock without heartbeat for this long is taken over (default STALE_LOCK_MS). */
+  staleMs?: number;
+  /** Delay between retries while waiting (default 2s). */
+  pollMs?: number;
+}
+
+export interface AcquiredLock {
+  /** Set when a stale lock of a crashed deploy was taken over. */
+  tookOverFrom?: LockInfo;
 }
 
 export class LockError extends Error {
   readonly lock: LockInfo;
   constructor(lock: LockInfo, now: Date = new Date()) {
     const age = Math.round((now.getTime() - lock.lockedAt.getTime()) / 1000);
-    const stale = now.getTime() - lock.lockedAt.getTime() > STALE_LOCK_MS;
+    const stale = now.getTime() - (lock.heartbeatAt ?? lock.lockedAt).getTime() > STALE_LOCK_MS;
     super(
       `Another migration is running (lock held by ${lock.owner} since ${lock.lockedAt.toISOString()}, ${age}s ago).` +
         (stale
           ? " The lock looks stale (the process may have crashed). If no deploy is running, release it with `hana-orm migrate unlock`."
-          : " Wait for it to finish, or run `hana-orm migrate unlock` if you are sure no deploy is running."),
+          : " Wait for it to finish (or pass --wait <seconds>), or run `hana-orm migrate unlock` if you are sure no deploy is running."),
     );
     this.name = "LockError";
     this.lock = lock;
@@ -67,7 +86,10 @@ export interface HistoryStore {
   ensureTables(): Promise<void>;
   /** True when the migrations table exists (read-only commands do not create it). */
   hasHistory(): Promise<boolean>;
-  acquireLock(owner: string): Promise<void>;
+  /** Takes the deploy lock, taking over a stale one; throws `LockError` while a live lock remains. */
+  acquireLock(owner: string, options?: AcquireLockOptions): Promise<AcquiredLock>;
+  /** Refreshes the lock; returns false when `owner` no longer holds it. */
+  heartbeat(owner: string): Promise<boolean>;
   releaseLock(owner: string): Promise<void>;
   /** Removes any lock; returns true when one was held. */
   forceUnlock(): Promise<boolean>;
@@ -123,6 +145,13 @@ export class SqlHistoryStore implements HistoryStore {
     return rows.length > 0;
   }
 
+  private async hasColumn(table: string, column: string): Promise<boolean> {
+    const rows = this.schema
+      ? await this.db.query("SELECT 1 FROM SYS.TABLE_COLUMNS WHERE SCHEMA_NAME = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?", [this.schema, table, column])
+      : await this.db.query("SELECT 1 FROM SYS.TABLE_COLUMNS WHERE SCHEMA_NAME = CURRENT_SCHEMA AND TABLE_NAME = ? AND COLUMN_NAME = ?", [table, column]);
+    return rows.length > 0;
+  }
+
   async hasHistory(): Promise<boolean> {
     return this.exists(MIGRATIONS_TABLE);
   }
@@ -138,8 +167,11 @@ export class SqlHistoryStore implements HistoryStore {
     }
     if (!(await this.exists(LOCK_TABLE))) {
       await this.db.execute(
-        `CREATE COLUMN TABLE ${this.ref(LOCK_TABLE)} ("ID" INTEGER NOT NULL PRIMARY KEY, "LOCKED_BY" NVARCHAR(255) NOT NULL, "LOCKED_AT" TIMESTAMP NOT NULL)`,
+        `CREATE COLUMN TABLE ${this.ref(LOCK_TABLE)} ("ID" INTEGER NOT NULL PRIMARY KEY, "LOCKED_BY" NVARCHAR(255) NOT NULL, "LOCKED_AT" TIMESTAMP NOT NULL, "HEARTBEAT_AT" TIMESTAMP)`,
       );
+    } else if (!(await this.hasColumn(LOCK_TABLE, "HEARTBEAT_AT"))) {
+      // lock table created by an earlier version
+      await this.db.execute(`ALTER TABLE ${this.ref(LOCK_TABLE)} ADD ("HEARTBEAT_AT" TIMESTAMP)`);
     }
     if (!(await this.exists(MARKER_TABLE))) {
       await this.db.execute(
@@ -149,19 +181,52 @@ export class SqlHistoryStore implements HistoryStore {
   }
 
   async readLock(): Promise<LockInfo | null> {
-    const rows = await this.db.query<{ LOCKED_BY: string; LOCKED_AT: Date | string }>(`SELECT "LOCKED_BY", "LOCKED_AT" FROM ${this.ref(LOCK_TABLE)} WHERE "ID" = 1`);
+    const rows = await this.db.query<{ LOCKED_BY: string; LOCKED_AT: Date | string; HEARTBEAT_AT?: Date | string | null }>(
+      `SELECT "LOCKED_BY", "LOCKED_AT", "HEARTBEAT_AT" FROM ${this.ref(LOCK_TABLE)} WHERE "ID" = 1`,
+    );
     const r = rows[0];
-    return r ? { owner: r.LOCKED_BY, lockedAt: toDate(r.LOCKED_AT) ?? new Date(0) } : null;
+    if (!r) return null;
+    const info: LockInfo = { owner: r.LOCKED_BY, lockedAt: toDate(r.LOCKED_AT) ?? new Date(0) };
+    const beat = toDate(r.HEARTBEAT_AT);
+    if (beat) info.heartbeatAt = beat;
+    return info;
   }
 
-  async acquireLock(owner: string): Promise<void> {
-    try {
-      await this.db.execute(`INSERT INTO ${this.ref(LOCK_TABLE)} ("ID", "LOCKED_BY", "LOCKED_AT") VALUES (1, ?, CURRENT_UTCTIMESTAMP)`, [owner]);
-    } catch (e) {
-      const lock = await this.readLock();
-      if (lock) throw new LockError(lock);
-      throw e;
+  async acquireLock(owner: string, options: AcquireLockOptions = {}): Promise<AcquiredLock> {
+    const staleSeconds = Math.max(1, Math.round((options.staleMs ?? STALE_LOCK_MS) / 1000));
+    const deadline = Date.now() + (options.waitMs ?? 0);
+    const pollMs = options.pollMs ?? 2000;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.db.execute(
+          `INSERT INTO ${this.ref(LOCK_TABLE)} ("ID", "LOCKED_BY", "LOCKED_AT", "HEARTBEAT_AT") VALUES (1, ?, CURRENT_UTCTIMESTAMP, CURRENT_UTCTIMESTAMP)`,
+          [owner],
+        );
+        return {};
+      } catch (e) {
+        const lock = await this.readLock();
+        if (!lock) {
+          // released between our insert and our read: try again a few times
+          if (attempt < 3) continue;
+          throw e;
+        }
+        // Take over a lock whose owner stopped sending heartbeats. Matching on the old owner makes
+        // the takeover atomic: when two deploys race, only one UPDATE changes the row.
+        const taken = await this.db.execute(
+          `UPDATE ${this.ref(LOCK_TABLE)} SET "LOCKED_BY" = ?, "LOCKED_AT" = CURRENT_UTCTIMESTAMP, "HEARTBEAT_AT" = CURRENT_UTCTIMESTAMP ` +
+            `WHERE "ID" = 1 AND "LOCKED_BY" = ? AND COALESCE("HEARTBEAT_AT", "LOCKED_AT") < ADD_SECONDS(CURRENT_UTCTIMESTAMP, ?)`,
+          [owner, lock.owner, -staleSeconds],
+        );
+        if (taken === 1) return { tookOverFrom: lock };
+        if (Date.now() >= deadline) throw new LockError(lock);
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
     }
+  }
+
+  async heartbeat(owner: string): Promise<boolean> {
+    const n = await this.db.execute(`UPDATE ${this.ref(LOCK_TABLE)} SET "HEARTBEAT_AT" = CURRENT_UTCTIMESTAMP WHERE "ID" = 1 AND "LOCKED_BY" = ?`, [owner]);
+    return n === 1;
   }
 
   async releaseLock(owner: string): Promise<void> {

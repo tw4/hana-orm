@@ -4,7 +4,7 @@ import type { Driver, Queryable } from "../runtime/driver.ts";
 import type { GraphProblem, LoadedMigration } from "./files.ts";
 import { readSqlFile, short, verifyGraph } from "./files.ts";
 import type { HistoryRecord, HistoryStore } from "./history.ts";
-import { lockOwner } from "./history.ts";
+import { LOCK_HEARTBEAT_MS, lockOwner } from "./history.ts";
 import type { Check, MigrationOp } from "./ops.ts";
 import { splitSqlStatements } from "./sql-split.ts";
 
@@ -120,6 +120,10 @@ export function deployBlockers(report: StatusReport): string[] {
 // ---- deploy ---------------------------------------------------------------------
 
 export interface DeployOptions {
+  /** Wait this long for another deploy's live lock (default 0). */
+  waitMs?: number;
+  /** Lock heartbeat interval (default LOCK_HEARTBEAT_MS). */
+  heartbeatMs?: number;
   log?: (message: string) => void;
   now?: () => Date;
   owner?: string;
@@ -177,13 +181,31 @@ export async function deploy(driver: Driver, store: HistoryStore, migrations: re
   const log = options.log ?? (() => {});
   await store.ensureTables();
   const owner = options.owner ?? lockOwner();
-  await store.acquireLock(owner);
+  const acquired = await store.acquireLock(owner, { waitMs: options.waitMs ?? 0 });
+  if (acquired.tookOverFrom) {
+    const t = acquired.tookOverFrom;
+    log(`Took over a stale migration lock held by ${t.owner} (no heartbeat since ${(t.heartbeatAt ?? t.lockedAt).toISOString()}).`);
+  }
+  // Keep the lock alive while migrations run; if another process takes it over, stop before the next migration.
+  let lost = false;
+  const timer = setInterval(() => {
+    store.heartbeat(owner).then(
+      (held) => {
+        if (!held) lost = true;
+      },
+      () => {},
+    );
+  }, options.heartbeatMs ?? LOCK_HEARTBEAT_MS);
+  timer.unref?.();
   try {
     const report = computeStatus(migrations, await store.list());
     const blockers = deployBlockers(report);
     if (blockers.length) return { applied: [], failed: null, blockers };
     const applied: string[] = [];
     for (const m of report.pending) {
+      if (lost || !(await store.heartbeat(owner))) {
+        return { applied, failed: null, blockers: [`Lost the migration lock before applying ${m.id}: another deploy took it over. Check \`hana-orm migrate status\` and deploy again.`] };
+      }
       log(`Applying ${m.id} (${m.ops.ops.length} operation(s))`);
       try {
         await applyMigration(driver, store, m, options);
@@ -194,6 +216,7 @@ export async function deploy(driver: Driver, store: HistoryStore, migrations: re
     }
     return { applied, failed: null, blockers: [] };
   } finally {
+    clearInterval(timer);
     await store.releaseLock(owner);
   }
 }

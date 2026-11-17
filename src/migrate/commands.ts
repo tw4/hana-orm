@@ -323,11 +323,17 @@ export async function migrateShow(args: ParsedArgs, ctx: CliContext): Promise<nu
   return 0;
 }
 
-export async function migrateDeploy(_args: ParsedArgs, ctx: CliContext): Promise<number> {
+export async function migrateDeploy(args: ParsedArgs, ctx: CliContext): Promise<number> {
   const migrations = await readMigrations(ctx.migrationsDir);
+  const wait = args.flags.wait;
+  const waitSeconds = typeof wait === "string" ? Number(wait) : 0;
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
+    ctx.warn("--wait expects a number of seconds");
+    return 1;
+  }
   return withDb(ctx, async (db) => {
     const store = await historyStore(ctx, db);
-    const result = await deploy(db, store, migrations, { log: (m) => ctx.log(m) });
+    const result = await deploy(db, store, migrations, { log: (m) => ctx.log(m), waitMs: waitSeconds * 1000 });
     if (result.blockers.length) {
       ctx.warn("migrate deploy stopped before applying anything:");
       for (const b of result.blockers) ctx.warn(`  - ${b}`);
