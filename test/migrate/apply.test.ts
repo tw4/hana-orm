@@ -322,3 +322,23 @@ test("deploy stops before the next migration when the lock was taken over", asyn
   assert.match(r.blockers[0]!, /Lost the migration lock before applying 20260102000000_posts/);
   assert.equal(store.lock?.owner, "someone-else", "does not release a lock it no longer owns");
 });
+
+test("script ops run a migration file with the transaction and stop on errors", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { runMigrationScript } = await import("../../src/migrate/apply.ts");
+  const dir = mkdtempSync(join(tmpdir(), "hana-orm-script-"));
+  writeFileSync(join(dir, "ok.ts"), `export default async ({ query, execute, log }: any) => { const rows = await query("SELECT 1"); await execute("UPDATE X SET A = ?", [rows.length]); log("done"); };`);
+  writeFileSync(join(dir, "bad.ts"), `export async function up() { throw new Error("boom"); }`);
+  writeFileSync(join(dir, "none.ts"), `export const x = 1;`);
+  const d = new FakeDriver();
+  d.onQuery = () => [{ ONE: 1 }];
+  const logs: string[] = [];
+  await runOps(d, [{ kind: "script", description: "data", sql: [], file: "ok.ts" }], { runScript: (f, q) => runMigrationScript(join(dir, f), q, (m) => logs.push(m)) });
+  assert.deepEqual(d.executed.map((e) => [e.sql, e.params]), [["UPDATE X SET A = ?", [1]]]);
+  assert.deepEqual(logs, ["done"]);
+  await assert.rejects(runMigrationScript(join(dir, "bad.ts"), d, () => {}), /boom/);
+  await assert.rejects(runMigrationScript(join(dir, "none.ts"), d, () => {}), /must export a default function/);
+  await assert.rejects(runOps(d, [{ kind: "script", description: "data", sql: [], file: "ok.ts" }]), /needs its script file/);
+});

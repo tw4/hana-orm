@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 /** Running operations, migration status and `migrate deploy`. */
 
 import type { Driver, Queryable } from "../runtime/driver.ts";
@@ -29,6 +31,38 @@ export interface RunOpsOptions {
   loadFile?: (name: string) => Promise<string>;
   /** Receives one line per executed statement. */
   onStatement?: (sql: string) => void;
+  /** Runs a `script` op's file with the transaction. */
+  runScript?: (file: string, q: Queryable) => Promise<void>;
+}
+
+/** What a data migration script (`migration.ts`) receives. Everything runs in the migration's transaction. */
+export interface MigrationScriptContext {
+  /** The migration's transaction. */
+  tx: Queryable;
+  /** Runs a SELECT with bound `?` parameters. */
+  query<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): Promise<T[]>;
+  /** Runs DML/DDL with bound `?` parameters; returns the affected row count. */
+  execute(sql: string, params?: readonly unknown[]): Promise<number>;
+  /** Prints a line during `migrate deploy`. */
+  log(message: string): void;
+}
+
+/** Default export of a `migration.ts` file. */
+export type MigrationScript = (ctx: MigrationScriptContext) => Promise<void> | void;
+
+/** Imports a migration script and runs its default export (or a named `up`). */
+export async function runMigrationScript(path: string, q: Queryable, log: (message: string) => void, cacheKey = ""): Promise<void> {
+  const url = `${pathToFileURL(path).href}${cacheKey ? `?v=${cacheKey}` : ""}`;
+  const mod = (await import(url)) as { default?: unknown; up?: unknown };
+  const fn = typeof mod.default === "function" ? mod.default : typeof mod.up === "function" ? mod.up : undefined;
+  if (!fn) throw new Error(`${path} must export a default function (or a function named 'up')`);
+  const ctx: MigrationScriptContext = {
+    tx: q,
+    query: (sql, params) => q.query(sql, params),
+    execute: (sql, params) => q.execute(sql, params),
+    log,
+  };
+  await (fn as MigrationScript)(ctx);
 }
 
 /** Runs ops in order: pre-check → statements → post-check. Throws on the first failure. */
@@ -39,6 +73,11 @@ export async function runOps(q: Queryable, ops: readonly MigrationOp[], options:
     if (op.kind === "sqlFile") {
       if (!op.file || !options.loadFile) throw new Error(`Operation "${op.description}" needs its SQL file`);
       statements = [...op.sql, ...splitSqlStatements(await options.loadFile(op.file))];
+    }
+    if (op.kind === "script") {
+      if (!op.file || !options.runScript) throw new Error(`Operation "${op.description}" needs its script file`);
+      options.onStatement?.(`-- script ${op.file}`);
+      await options.runScript(op.file, q);
     }
     for (const s of statements) {
       options.onStatement?.(s);
@@ -143,7 +182,11 @@ export async function applyMigration(driver: Driver, store: HistoryStore, m: Loa
   try {
     await driver.transaction(
       async (tx) => {
-        await runOps(tx, m.ops.ops, { loadFile: (f) => readSqlFile(m, f), onStatement: (s) => statements.push(s) });
+        await runOps(tx, m.ops.ops, {
+          loadFile: (f) => readSqlFile(m, f),
+          onStatement: (s) => statements.push(s),
+          runScript: (f, q) => runMigrationScript(join(m.dir, f), q, (msg) => options.log?.(`  ${m.id}: ${msg}`), m.checksum.slice(0, 12)),
+        });
         await store.record(tx, {
           id: m.id,
           name: m.name,

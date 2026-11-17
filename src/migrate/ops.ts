@@ -18,7 +18,9 @@ export type OpKind =
   | "createIndex"
   | "addForeignKey"
   /** Hand-written SQL read from a file in the migration folder (`migrate plan --empty`). */
-  | "sqlFile";
+  | "sqlFile"
+  /** A TypeScript/JavaScript data migration in the migration folder (`migrate plan --script`). */
+  | "script";
 
 /**
  * A query run before (precheck) or after (postcheck) an op. `expect: "empty"` passes when
@@ -42,7 +44,7 @@ export interface MigrationOp {
   postcheck?: Check;
   /** Table key the op works on (for grouping and messages). */
   table?: string;
-  /** For `sqlFile`: file name relative to the migration folder. */
+  /** For `sqlFile` and `script`: file name relative to the migration folder. */
   file?: string;
 }
 
@@ -80,6 +82,9 @@ export function opsToSql(ops: readonly MigrationOp[]): string {
     out.push(`-- ${op.description}${op.destructive ? " [destructive]" : ""}`);
     if (op.kind === "sqlFile") {
       out.push(`-- (statements from ${op.file})`);
+    }
+    if (op.kind === "script") {
+      out.push(`-- (runs ${op.file} in the same transaction)`);
     }
     for (const s of op.sql) out.push(`${s};`);
     out.push("");

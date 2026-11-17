@@ -24,6 +24,7 @@ import { OPS_FORMAT_VERSION, opsToSql } from "./ops.ts";
 
 export const OPS_FILE = "ops.json";
 export const SQL_FILE = "migration.sql";
+export const SCRIPT_FILE = "migration.ts";
 export const CONTRACT_FILE = "contract.json";
 
 const ID_PATTERN = /^(\d{14})_([A-Za-z0-9_]+)$/;
@@ -91,7 +92,7 @@ export function computeChecksum(opsJson: string, files: Record<string, string> =
 }
 
 function referencedFiles(ops: readonly MigrationOp[]): string[] {
-  return [...new Set(ops.filter((o) => o.kind === "sqlFile" && o.file).map((o) => o.file!))];
+  return [...new Set(ops.filter((o) => (o.kind === "sqlFile" || o.kind === "script") && o.file).map((o) => o.file!))];
 }
 
 export async function readMigrationDir(dir: string, id: string): Promise<LoadedMigration> {
@@ -147,6 +148,8 @@ export interface NewMigration {
   snapshot: ContractSnapshot;
   /** Contents for `migration.sql` when it is the executable file of an empty migration. */
   handWrittenSql?: string;
+  /** More files to write into the folder, e.g. `migration.ts`. */
+  extraFiles?: Record<string, string>;
 }
 
 export function buildOpsFile(m: Pick<NewMigration, "id" | "name" | "from" | "to" | "ops">): OpsFile {
@@ -168,6 +171,21 @@ export function reviewSql(ops: OpsFile): string {
   return header.join("\n") + opsToSql(ops.ops);
 }
 
+export const SCRIPT_TEMPLATE = `import type { MigrationScript } from "hana-orm/migrate";
+
+// Data migration. Runs inside this migration's transaction, at its place in ops.json
+// (after the schema changes listed before it). Throwing rolls the whole migration back.
+const migration: MigrationScript = async ({ query, execute, log }) => {
+  // const rows = await query<{ ID: number }>('SELECT "ID" FROM "USERS" WHERE "DISPLAY_NAME" IS NULL');
+  // for (const row of rows) {
+  //   await execute('UPDATE "USERS" SET "DISPLAY_NAME" = ? WHERE "ID" = ?', [\`user-\${row.ID}\`, row.ID]);
+  // }
+  log("nothing to do yet");
+};
+
+export default migration;
+`;
+
 export const EMPTY_MIGRATION_SQL = [
   "-- Hand-written migration. Statements are separated by ';' and run in order",
   "-- inside one transaction by `hana-orm migrate deploy`.",
@@ -184,6 +202,7 @@ export async function writeMigration(migrationsDir: string, m: NewMigration): Pr
   await writeFile(join(dir, OPS_FILE), serializeOps(ops), "utf8");
   await writeFile(join(dir, SQL_FILE), m.handWrittenSql ?? reviewSql(ops), "utf8");
   await writeFile(join(dir, CONTRACT_FILE), `${JSON.stringify(m.snapshot, null, 2)}\n`, "utf8");
+  for (const [name, content] of Object.entries(m.extraFiles ?? {})) await writeFile(join(dir, name), content, "utf8");
   return readMigrationDir(dir, m.id);
 }
 

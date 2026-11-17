@@ -25,7 +25,7 @@ export const DB_MIGRATE_HELP = `Database commands:
   db verify                   Check the marker hash and compare tables with the schema (drift).
 
 Migration commands:
-  migrate plan --name <name> [--allow-destructive] [--empty]
+  migrate plan --name <name> [--allow-destructive] [--empty] [--script]
                               Write migrations/<timestamp>_<name>/ (ops.json, migration.sql,
                               contract.json) from the change since the latest migration.
                               No database connection is needed.

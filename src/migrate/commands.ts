@@ -18,6 +18,8 @@ import { compareWithLive } from "./drift.ts";
 import type { ContractSnapshot, LoadedMigration } from "./files.ts";
 import {
   EMPTY_MIGRATION_SQL,
+  SCRIPT_FILE,
+  SCRIPT_TEMPLATE,
   SQL_FILE,
   readMigrations,
   readSnapshot,
@@ -247,6 +249,9 @@ export async function migratePlan(args: ParsedArgs, ctx: CliContext, now: () => 
   const prev = await lastSnapshot(migrations);
   const id = `${nextMigrationStamp(now(), migrations.map((m) => m.id))}_${sanitizeMigrationName(rawName)}`;
 
+  const withScript = boolFlag(args, "script", "ts");
+  const scriptOp: MigrationOp = { kind: "script", description: `Data migration ${SCRIPT_FILE}`, sql: [], file: SCRIPT_FILE };
+
   if (boolFlag(args, "empty")) {
     const base = prev ?? { version: 1 as const, hash: EMPTY_CONTRACT_HASH, models: {}, enums: {} };
     const written = await writeMigration(ctx.migrationsDir, {
@@ -254,16 +259,17 @@ export async function migratePlan(args: ParsedArgs, ctx: CliContext, now: () => 
       name: sanitizeMigrationName(rawName),
       from: prev ? prev.hash : null,
       to: base.hash,
-      ops: [{ kind: "sqlFile", description: `Hand-written SQL from ${SQL_FILE}`, sql: [], file: SQL_FILE }],
+      ops: withScript ? [scriptOp] : [{ kind: "sqlFile", description: `Hand-written SQL from ${SQL_FILE}`, sql: [], file: SQL_FILE }],
       snapshot: base,
-      handWrittenSql: EMPTY_MIGRATION_SQL,
+      ...(withScript ? { extraFiles: { [SCRIPT_FILE]: SCRIPT_TEMPLATE } } : { handWrittenSql: EMPTY_MIGRATION_SQL }),
     });
-    ctx.log(`Created empty migration ${relPath(ctx, written.dir)}. Write your SQL in ${SQL_FILE}.`);
+    ctx.log(`Created empty migration ${relPath(ctx, written.dir)}. Write your ${withScript ? "data migration in " + SCRIPT_FILE : "SQL in " + SQL_FILE}.`);
     return 0;
   }
 
   const defaultSchema = await ctx.defaultSchema();
   const ops = await planBetween(prev, contract, defaultSchema, (c) => confirmCandidates(ctx, c));
+  if (withScript) ops.push(scriptOp);
   if (!ops.length) {
     ctx.log(prev && prev.hash !== contract.hash ? "The schema changed, but not in a way that needs database changes. No migration was created." : "No changes. The schema matches the latest migration.");
     return 0;
@@ -279,6 +285,7 @@ export async function migratePlan(args: ParsedArgs, ctx: CliContext, now: () => 
     to: contract.hash,
     ops,
     snapshot: toSnapshot(contract),
+    ...(withScript ? { extraFiles: { [SCRIPT_FILE]: SCRIPT_TEMPLATE } } : {}),
   });
   ctx.log(`Created migration ${relPath(ctx, written.dir)} with ${ops.length} operation(s):`);
   printOps(ctx, ops);
@@ -293,6 +300,8 @@ async function migrationSql(m: LoadedMigration): Promise<string> {
   for (const op of m.ops.ops) {
     if (op.kind === "sqlFile" && op.file) {
       parts.push(`-- ${op.description}`, (await readSqlFile(m, op.file)).trim(), "");
+    } else if (op.kind === "script" && op.file) {
+      parts.push(`-- ${op.description} (TypeScript, runs in the same transaction):`, ...(await readSqlFile(m, op.file)).trim().split("\n").map((l) => `--   ${l}`), "");
     } else parts.push(opsToSql([op]));
   }
   return parts.join("\n");

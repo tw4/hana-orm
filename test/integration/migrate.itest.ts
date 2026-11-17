@@ -205,6 +205,42 @@ test("renaming a unique constraint and moving a table to another schema keep the
   }
 });
 
+test("TypeScript data migrations run inside the migration transaction", { skip }, async () => {
+  assert.equal(await cli("migrate", "plan", "--name", "fill_phone", "--empty", "--script"), 0);
+  const folder = readdirSync(join(dir, "migrations")).sort().at(-1)!;
+  writeFileSync(
+    join(dir, "migrations", folder, "migration.ts"),
+    `import type { MigrationScript } from "hana-orm/migrate";
+const migration: MigrationScript = async ({ query, execute, log }) => {
+  const rows = await query<{ ID: number }>('SELECT "id" AS "ID" FROM "ACCOUNTS" WHERE "phone" IS NULL');
+  for (const r of rows) await execute('UPDATE "ACCOUNTS" SET "phone" = ? WHERE "id" = ?', ["+00-" + r.ID, r.ID]);
+  log("filled " + rows.length);
+};
+export default migration;
+`,
+  );
+  assert.equal(await cli("migrate", "deploy"), 0);
+  const rows = await admin.query<{ P: string | null }>(`SELECT "phone" AS "P" FROM "${schemaName}"."ACCOUNTS"`);
+  assert.ok(rows.length > 0 && rows.every((r) => r.P?.startsWith("+00-")), JSON.stringify(rows));
+
+  // a failing script rolls back its migration, including statements it already ran
+  assert.equal(await cli("migrate", "plan", "--name", "broken", "--empty", "--script"), 0);
+  const broken = readdirSync(join(dir, "migrations")).sort().at(-1)!;
+  writeFileSync(
+    join(dir, "migrations", broken, "migration.ts"),
+    `export default async ({ execute }: { execute: (s: string) => Promise<number> }) => {
+  await execute('UPDATE "ACCOUNTS" SET "phone" = NULL');
+  throw new Error("stop");
+};
+`,
+  );
+  assert.equal(await cli("migrate", "deploy"), 1);
+  const after = await admin.query<{ P: string | null }>(`SELECT "phone" AS "P" FROM "${schemaName}"."ACCOUNTS"`);
+  assert.ok(after.every((r) => r.P?.startsWith("+00-")), "rolled back");
+  await cli("migrate", "resolve", "--rolled-back", broken);
+  rmSync(join(dir, "migrations", broken), { recursive: true, force: true });
+});
+
 test("db pull reproduces an equivalent schema", { skip }, async () => {
   const pulledFile = join(dir, "pulled.hana");
   writeFileSync(pulledFile, header);
