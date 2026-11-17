@@ -1,0 +1,43 @@
+// Integration test schema. Tables are LOCAL TEMPORARY tables (#NAME): they exist only for
+// the test's own connection and are dropped automatically. Nothing persistent is written.
+
+enum Status {
+  OPEN
+  DONE @map("done")
+}
+
+model Customer {
+  id        Int       @id @default(autoincrement())
+  email     String    @unique @db.NVarChar(200)
+  name      String?   @db.NVarChar(200)
+  credit    Decimal   @default("0") @db.Decimal(15, 2)
+  points    BigInt    @default(0)
+  vip       Boolean   @default(false)
+  createdAt DateTime  @default(now()) @map("CREATED_AT")
+  orders    Order[]
+
+  @@map("#ITEST_CUSTOMERS")
+}
+
+model Order {
+  id         Int        @id @default(autoincrement())
+  status     Status     @default(OPEN)
+  total      Float
+  note       String?    @db.NClob
+  customerId Int
+  customer   Customer   @relation(fields: [customerId], references: [id])
+  lines      OrderLine[]
+
+  @@map("#ITEST_ORDERS")
+}
+
+model OrderLine {
+  orderId Int
+  lineNo  Int
+  sku     String @db.NVarChar(40)
+  qty     Int
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  @@id([orderId, lineNo])
+  @@map("#ITEST_LINES")
+}

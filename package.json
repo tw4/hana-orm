@@ -1,0 +1,49 @@
+{
+  "name": "hana-orm",
+  "version": "0.1.0-alpha.0",
+  "description": "Type-safe TypeScript ORM for SAP HANA with a Prisma-like schema, typed client and migrations CLI",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tw4/hana-orm.git"
+  },
+  "keywords": ["sap", "hana", "orm", "typescript", "migrations", "query-builder"],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "bin": {
+    "hana-orm": "dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "test:integration": "node --test \"test/integration/**/*.itest.ts\"",
+    "prepare": "npm run build"
+  },
+  "peerDependencies": {
+    "@sap/hana-client": ">=2.20.0"
+  },
+  "peerDependenciesMeta": {
+    "@sap/hana-client": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@sap/hana-client": "^2.30.32",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

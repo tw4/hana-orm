@@ -1,0 +1,67 @@
+datasource db {
+  provider = "hana"
+  host     = env("HANA_HOST")
+  port     = env("HANA_PORT")
+  user     = env("HANA_USER")
+  password = env("HANA_PASSWORD")
+  schema   = "APP"
+}
+
+generator client {
+  provider = "hana-orm"
+  output   = "./generated"
+}
+
+enum Role {
+  USER
+  ADMIN @map("admin")
+}
+
+/// A registered user
+model User {
+  id        Int       @id @default(autoincrement())
+  email     String    @unique @db.NVarChar(320)
+  name      String?
+  role      Role      @default(USER)
+  balance   Decimal   @default(0) @db.Decimal(15, 2)
+  visits    BigInt    @default(0)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("CREATED_AT")
+  updatedAt DateTime  @updatedAt @map("UPDATED_AT")
+  posts     Post[]
+  profile   Profile?
+
+  @@map("USERS")
+}
+
+model Profile {
+  id     String @id @default(uuid())
+  bio    String @db.NClob
+  userId Int    @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Post {
+  id        Int       @id @default(autoincrement())
+  title     String
+  published Boolean   @default(false)
+  authorId  Int?
+  author    User?     @relation(fields: [authorId], references: [id])
+  tags      PostTag[]
+
+  @@index([authorId])
+}
+
+model Tag {
+  name  String    @id
+  posts PostTag[]
+}
+
+model PostTag {
+  postId  Int
+  tagName String
+  post    Post @relation(fields: [postId], references: [id])
+  tag     Tag  @relation(fields: [tagName], references: [name])
+
+  @@id([postId, tagName])
+}
