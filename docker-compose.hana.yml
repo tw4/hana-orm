@@ -5,6 +5,15 @@
 #   3. Put the connection into .env.test (ignored by git):
 #        HANA_HOST=localhost  HANA_PORT=39041  HANA_USER=SYSTEM  HANA_PASSWORD=...  HANA_DATABASE=HXE
 #   4. HANA_ORM_ENV_FILE=.env.test npm run test:integration
+#      (HANA_ORM_ALLOW_DDL=1 also runs the migration tests)
+#
+# Notes:
+#   - HANA deletes password.json after the first start. To start from scratch, empty
+#     .local/hxe and create password.json again.
+#   - It needs ~10 GB of free disk; with less, the log volume fills up and the start hangs.
+#   - The image is amd64 only. On Apple Silicon it runs under emulation and is slow.
+#   - docker/hana-seccomp.json is Docker's default seccomp profile (moby v27.3.1) plus the
+#     NUMA syscalls HANA needs (mbind, move_pages, get/set_mempolicy).
 #
 # Starting the container accepts the SAP HANA Express license (--agree-to-sap-license):
 # https://www.sap.com/about/legal/agreements.html
@@ -18,6 +27,10 @@ services:
       - "39013:39013" # SYSTEMDB SQL
       - "39017:39017"
       - "39041:39041" # tenant HXE SQL
+    platform: linux/amd64
+    # Docker's default seccomp profile plus the NUMA syscalls HANA uses (mbind, move_pages).
+    security_opt:
+      - seccomp=./docker/hana-seccomp.json
     ulimits:
       nofile: 1048576
     sysctls:
