@@ -146,6 +146,33 @@ Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `ag
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
 
+#### Many-to-many relations
+
+Two list fields that point at each other, with no `@relation(fields, references)` side, form an
+implicit many-to-many relation:
+
+```prisma
+model Post {
+  id   Int   @id @default(autoincrement())
+  tags Tag[]
+}
+
+model Tag {
+  name  String @id
+  posts Post[]
+}
+```
+
+- Migrations create a join table `_PostToTag` (or `_<Name>` for `@relation("Name")`) with the
+  columns `A` and `B`, a primary key on both, an index on `B` and cascading foreign keys. `A`
+  references the model whose name sorts first (for a self-relation, the field whose name sorts
+  first). This is the same layout Prisma uses, and `db pull` turns such tables back into list fields.
+- Both models need a single-field `@id`. For extra columns on the link, use an explicit join model.
+- Filters (`some`/`every`/`none`), `include`, `_count`, `orderBy: { tags: { _count } }` and the nested
+  writes `create`, `connect`, `connectOrCreate`, `disconnect`, `set`, `update`, `updateMany`,
+  `upsert`, `delete`, `deleteMany` work through the join table. `connect` of a row that is already
+  linked does nothing. There is no nested `createMany`.
+
 #### Bulk inserts
 
 ```ts

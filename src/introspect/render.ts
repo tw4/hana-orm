@@ -279,7 +279,9 @@ export function renderSchema(physical: PhysicalSchema, options: RenderOptions): 
   for (const plan of plans.values()) buildColumns(plan, enums, warnings);
 
   // ---- relations ----
+  const joins = takeJoinTables(plans, warnings);
   buildRelations(plans, warnings);
+  buildManyToMany(joins, plans);
 
   // ---- assemble ----
   const out: string[] = [];
@@ -519,6 +521,87 @@ function buildRelations(plans: Map<string, ModelPlan>, warnings: string[]): void
       attrs: [...ignoreAttr(target), ...(relationName ? [`@relation(${quoteString(relationName)})`] : [])],
       ...(exBack?.doc ? { doc: exBack.doc } : {}),
     });
+  }
+}
+
+interface JoinTable {
+  relationName: string;
+  a: ModelPlan;
+  b: ModelPlan;
+}
+
+/**
+ * Finds join tables of implicit many-to-many relations (Prisma's layout: `_<Name>` with
+ * columns `A` and `B`, a foreign key from each to a single-column primary key, and a primary
+ * key or unique on both) and removes them from `plans`. `A` must reference the model whose name
+ * sorts first, as the schema builder expects; other tables stay models.
+ */
+function takeJoinTables(plans: Map<string, ModelPlan>, warnings: string[]): JoinTable[] {
+  const joins: JoinTable[] = [];
+  for (const [key, plan] of [...plans.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
+    if (plan.kind !== "model" || plan.existing) continue;
+    const t = plan.table as PhysicalTable;
+    if (!t.name.startsWith("_") || t.name.length < 2) continue;
+    const cols = t.columns.map((c) => c.name).sort();
+    if (cols.join(",") !== "A,B" || t.foreignKeys.length !== 2) continue;
+    const both = (columns: readonly string[]) => sameColumns([...columns].sort(), ["A", "B"]);
+    if (!(t.primaryKey && both(t.primaryKey.columns)) && !t.uniques.some((u) => both(u.columns))) continue;
+    const fkOf = (col: string) => t.foreignKeys.find((fk) => fk.columns.length === 1 && fk.columns[0] === col);
+    const fkA = fkOf("A");
+    const fkB = fkOf("B");
+    if (!fkA || !fkB) continue;
+    const a = plans.get(refKeyOf(fkA));
+    const b = plans.get(refKeyOf(fkB));
+    const singleKey = (p: ModelPlan | undefined, fk: PhysicalForeignKey) => {
+      const pk = p && p.kind === "model" ? (p.table as PhysicalTable).primaryKey : null;
+      return !!pk && pk.columns.length === 1 && fk.refColumns.length === 1 && pk.columns[0] === fk.refColumns[0];
+    };
+    if (!a || !b || a === plan || b === plan || !singleKey(a, fkA) || !singleKey(b, fkB)) continue;
+    if (a !== b && a.name > b.name) {
+      warnings.push(`Table '${key}' looks like a many-to-many join table, but column A references '${a.name}', which sorts after '${b.name}'; it was kept as a model.`);
+      continue;
+    }
+    plans.delete(key);
+    joins.push({ relationName: t.name.slice(1), a, b });
+  }
+  return joins;
+}
+
+/** Adds the two list fields of each implicit many-to-many relation. */
+function buildManyToMany(joins: JoinTable[], plans: Map<string, ModelPlan>): void {
+  for (const { relationName, a, b } of joins) {
+    if (![...plans.values()].includes(a) || ![...plans.values()].includes(b)) continue;
+    const self = a === b;
+    const named = self || relationName !== [a.name, b.name].sort().join("To");
+    const attrs = named ? [`@relation(${quoteString(relationName)})`] : [];
+    // existing list fields of this relation keep their names
+    const existing = (plan: ModelPlan, type: string): string[] =>
+      (plan.existing?.decl.fields ?? [])
+        .filter((f) => f.type === type && f.list && !attr(f.attributes, "relation")?.args.some((x) => x.name === "fields"))
+        .filter((f) => (relationNameArg(attr(f.attributes, "relation")) ?? [a.name, b.name].sort().join("To")) === relationName)
+        .map((f) => f.name)
+        .filter((n) => !plan.taken.has(n))
+        .sort();
+    if (self) {
+      // the field whose name sorts first is the A side; both sides are on the same model
+      const names = existing(a, a.name);
+      const first = names[0] ?? uniqueName(`${lowerFirst(relationName)}A`, a.taken);
+      if (names[0]) a.taken.add(first);
+      const second = names[1] ?? uniqueName(`${lowerFirst(relationName)}B`, a.taken);
+      if (names[1]) a.taken.add(second);
+      for (const name of [first, second].sort()) a.relationLines.push({ name, type: `${a.name}[]`, attrs });
+      continue;
+    }
+    const nameOn = (plan: ModelPlan, other: ModelPlan) => {
+      const ex = existing(plan, other.name)[0];
+      if (ex) {
+        plan.taken.add(ex);
+        return ex;
+      }
+      return uniqueName(plural(lowerFirst(other.name)), plan.taken);
+    };
+    a.relationLines.push({ name: nameOn(a, b), type: `${b.name}[]`, attrs });
+    b.relationLines.push({ name: nameOn(b, a), type: `${a.name}[]`, attrs });
   }
 }
 

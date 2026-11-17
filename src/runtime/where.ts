@@ -148,9 +148,19 @@ export function scalarCondition(engine: Engine, field: ColumnFieldDef, col: stri
   return parts.length === 1 ? parts[0]! : parts.map(paren).join(" AND ");
 }
 
-/** `alias.local = targetAlias.target` join condition for a relation. */
+/**
+ * `alias.local = targetAlias.target` join condition for a relation. For an implicit
+ * many-to-many relation it is an `EXISTS` over the join table.
+ */
 export function joinCondition(engine: Engine, model: ModelDef, rel: RelationFieldDef, alias: string, targetAlias: string): string {
   const target = engine.model(rel.model);
+  if (rel.through) {
+    const t = rel.through;
+    const ja = `${targetAlias}j`;
+    const own = rel.localFields.map((lf, i) => `${ja}.${quoteIdent(t.localColumns[i]!)} = ${alias}.${quoteIdent(engine.column(model, lf).dbName)}`);
+    const other = rel.targetFields.map((tf, i) => `${ja}.${quoteIdent(t.targetColumns[i]!)} = ${targetAlias}.${quoteIdent(engine.column(target, tf).dbName)}`);
+    return `EXISTS (SELECT 1 FROM ${engine.joinTable(rel)} ${ja} WHERE ${[...own, ...other].join(" AND ")})`;
+  }
   return rel.localFields
     .map((lf, i) => {
       const l = engine.column(model, lf);

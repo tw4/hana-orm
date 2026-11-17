@@ -4,6 +4,7 @@ import {
   CONTRACT_VERSION,
   relationFields,
   SCALAR_TYPES,
+  type ColumnFieldDef,
   type ConfigValue,
   type Contract,
   type DatasourceDef,
@@ -12,6 +13,7 @@ import {
   type FieldDef,
   type GeneratorDef,
   type IndexDef,
+  type JoinTableDef,
   type ModelDef,
   type NativeType,
   type ReferentialAction,
@@ -452,6 +454,7 @@ function resolveRelations(pending: PendingRelation[], models: Record<string, Mod
   }
 
   // back sides
+  const manyToMany: PendingRelation[] = [];
   for (const p of pending) {
     if (used.has(p)) continue;
     const { model, field, decl } = p;
@@ -463,6 +466,11 @@ function resolveRelations(pending: PendingRelation[], models: Record<string, Mod
         o.field.model === model.name &&
         (p.explicitName === undefined ? o.explicitName === undefined || countBetween(pending, model.name, field.model) === 1 : o.explicitName === p.explicitName),
     );
+    if (candidates.length === 0 && field.list) {
+      // no foreign key side: may be one side of an implicit many-to-many relation
+      manyToMany.push(p);
+      continue;
+    }
     if (candidates.length !== 1) {
       err(
         candidates.length === 0
@@ -480,6 +488,117 @@ function resolveRelations(pending: PendingRelation[], models: Record<string, Mod
     if (!field.list && !field.optional) err(`The non-foreign-key side '${model.name}.${field.name}' of a one-to-one relation must be optional`, decl.pos);
     used.add(p);
   }
+
+  resolveManyToMany(manyToMany, models, err);
+}
+
+/**
+ * Implicit many-to-many: two list fields that point at each other and have no foreign key
+ * side. Adds a hidden join model `_<RelationName>` with columns `A` and `B` (Prisma's layout:
+ * `A` references the model whose name sorts first; for a self-relation, the field whose name
+ * sorts first) and sets `through` on both fields.
+ */
+function resolveManyToMany(pending: PendingRelation[], models: Record<string, ModelDef>, err: Err): void {
+  const used = new Set<PendingRelation>();
+  for (const p of pending) {
+    if (used.has(p)) continue;
+    const { model, field, decl } = p;
+    const partnersOf = (x: PendingRelation) =>
+      pending.filter((o) => o !== x && o.model.name === x.field.model && o.field.model === x.model.name && o.explicitName === x.explicitName);
+    const partners = partnersOf(p);
+    // ambiguous when either side has more than one candidate (e.g. two unnamed lists to the same model)
+    const ambiguous = partners.length > 1 || (partners.length === 1 && partnersOf(partners[0]!).length > 1);
+    if (partners.length !== 1 || ambiguous || used.has(partners[0]!)) {
+      err(
+        partners.length === 0
+          ? `Relation '${model.name}.${field.name}' has no matching side: add @relation(fields: [...], references: [...]) on model '${field.model}', or a list field '${model.name}[]' there for a many-to-many relation`
+          : `Relation '${model.name}.${field.name}' is ambiguous; give both sides the same name: @relation("Name")`,
+        decl.pos,
+      );
+      continue;
+    }
+    const o = partners[0]!;
+    used.add(p).add(o);
+    // A side first: model name, then (self-relations) field name
+    const [a, b] = [p, o].sort((x, y) => (x.model.name === y.model.name ? cmp(x.field.name, y.field.name) : cmp(x.model.name, y.model.name)));
+    const keyOf = (r: PendingRelation): ColumnFieldDef | undefined => {
+      const pk = r.model.primaryKey?.fields;
+      if (!pk || pk.length !== 1) {
+        err(`Implicit many-to-many relation '${r.model.name}.${r.field.name}' needs a single-field @id on '${r.model.name}'; use an explicit join model instead`, r.decl.pos);
+        return undefined;
+      }
+      return r.model.fields.find((f): f is ColumnFieldDef => f.kind !== "relation" && f.name === pk[0]);
+    };
+    const aKey = keyOf(a);
+    const bKey = keyOf(b);
+    if (!aKey || !bKey) continue;
+    if (a.mapName || b.mapName) err(`@relation(map: ...) is not supported on implicit many-to-many relations`, (a.mapName ? a : b).decl.pos);
+
+    const relationName = p.explicitName ?? defaultRelationName(model.name, field.model);
+    const name = `_${relationName}`;
+    if (models[name]) {
+      err(`The join table '${name}' of relation '${model.name}.${field.name}' has the same name as a model`, decl.pos);
+      continue;
+    }
+    const column = (colName: string, key: ColumnFieldDef): ColumnFieldDef => ({
+      kind: key.kind,
+      name: colName,
+      dbName: colName,
+      type: key.type,
+      optional: false,
+      id: false,
+      unique: false,
+      updatedAt: false,
+      ...(key.nativeType ? { nativeType: key.nativeType } : {}),
+    }) as ColumnFieldDef;
+    const fk = (fieldName: string, colName: string, target: ModelDef, key: ColumnFieldDef): RelationFieldDef => ({
+      kind: "relation",
+      name: fieldName,
+      model: target.name,
+      list: false,
+      optional: false,
+      relationName: `${relationName}_${colName}`,
+      owner: true,
+      localFields: [colName],
+      targetFields: [key.name],
+      onDelete: "Cascade",
+      onUpdate: "Cascade",
+      fkName: constraintName("FK", name, [colName]),
+    });
+    const schema = a.model.schema;
+    models[name] = {
+      name,
+      dbName: name,
+      ...(schema ? { schema } : {}),
+      kind: "model",
+      implicit: true,
+      fields: [column("A", aKey), column("B", bKey), fk("a", "A", a.model, aKey), fk("b", "B", b.model, bKey)],
+      primaryKey: { name: "A_B", dbName: constraintName("PK", name, []), fields: ["A", "B"] },
+      uniques: [],
+      indexes: [{ dbName: constraintName("IX", name, ["B"]), fields: ["B"] }],
+    };
+    const join = (own: string, other: string): JoinTableDef => ({
+      model: name,
+      dbName: name,
+      ...(schema ? { schema } : {}),
+      localColumns: [own],
+      targetColumns: [other],
+    });
+    for (const [r, own, other, ownKey, otherKey] of [
+      [a, "A", "B", aKey, bKey],
+      [b, "B", "A", bKey, aKey],
+    ] as const) {
+      r.field.relationName = relationName;
+      r.field.owner = false;
+      r.field.localFields = [ownKey.name];
+      r.field.targetFields = [otherKey.name];
+      r.field.through = join(own, other);
+    }
+  }
+}
+
+function cmp(x: string, y: string): number {
+  return x < y ? -1 : x > y ? 1 : 0;
 }
 
 function ignoreAttr(a: Attribute, err: Err): boolean {
