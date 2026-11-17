@@ -54,6 +54,20 @@ export function timestampId(date: Date): string {
   return `${p(date.getUTCFullYear(), 4)}${p(date.getUTCMonth() + 1)}${p(date.getUTCDate())}${p(date.getUTCHours())}${p(date.getUTCMinutes())}${p(date.getUTCSeconds())}`;
 }
 
+/**
+ * Timestamp for a new migration id: now, or one second after the newest existing migration
+ * when that is not earlier (two plans in the same second, or a clock behind a teammate's).
+ */
+export function nextMigrationStamp(date: Date, existingIds: readonly string[]): string {
+  let stamp = timestampId(date);
+  const latest = existingIds.map((id) => id.slice(0, 14)).filter((x) => /^\d{14}$/.test(x)).sort().at(-1);
+  if (latest && stamp <= latest) {
+    const t = new Date(Date.UTC(+latest.slice(0, 4), +latest.slice(4, 6) - 1, +latest.slice(6, 8), +latest.slice(8, 10), +latest.slice(10, 12), +latest.slice(12, 14)) + 1000);
+    stamp = timestampId(t);
+  }
+  return stamp;
+}
+
 /** `Add users table!` → `add_users_table`. */
 export function sanitizeMigrationName(name: string): string {
   const s = name

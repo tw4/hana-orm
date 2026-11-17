@@ -3,6 +3,7 @@
 export type OpKind =
   | "renameTable"
   | "renameColumn"
+  | "renameIndex"
   | "dropForeignKey"
   | "dropIndex"
   | "dropUnique"

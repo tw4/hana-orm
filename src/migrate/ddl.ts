@@ -38,8 +38,15 @@ export function dropTableSql(t: { schema?: string; name: string }): string {
   return `DROP TABLE ${physicalTableRef(t)}`;
 }
 
-export function renameTableSql(from: { schema?: string; name: string }, toName: string): string {
-  return `RENAME TABLE ${physicalTableRef(from)} TO ${quoteIdent(toName)}`;
+/** `RENAME TABLE`; qualifies the target when the table moves to another schema (HANA supports that). */
+export function renameTableSql(from: { schema?: string; name: string }, to: { schema?: string; name: string }): string {
+  const target = (from.schema ?? "") === (to.schema ?? "") ? quoteIdent(to.name) : physicalTableRef(to);
+  return `RENAME TABLE ${physicalTableRef(from)} TO ${target}`;
+}
+
+/** HANA renames indexes but not constraints (no RENAME CONSTRAINT); constraints are dropped and re-added. */
+export function renameIndexSql(schema: string | undefined, from: string, to: string): string {
+  return `RENAME INDEX ${physicalTableRef({ schema, name: from })} TO ${quoteIdent(to)}`;
 }
 
 export function renameColumnSql(t: { schema?: string; name: string }, from: string, to: string): string {

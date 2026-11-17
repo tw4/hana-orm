@@ -26,6 +26,7 @@ import {
   noNullsCheck,
   physicalTableRef,
   renameColumnSql,
+  renameIndexSql,
   renameTableSql,
   tableEmptyCheck,
   tableExistsCheck,
@@ -36,7 +37,7 @@ import { clonePhysical, keyOf, refKeyOf, sameColumns, tableKey } from "./physica
 import { classifyTypeChange, normalizeDefaultSql, normalizeType } from "./types.ts";
 
 export interface Renames {
-  /** from table key → to table key (same schema only). */
+  /** from table key → to table key (may move the table to another schema). */
   tables: Record<string, string>;
   /** to table key → { from column → to column }. */
   columns: Record<string, Record<string, string>>;
@@ -49,6 +50,7 @@ export function emptyRenames(): Renames {
 const GROUPS = [
   "renameTable",
   "renameColumn",
+  "renameIndex",
   "dropForeignKey",
   "dropIndex",
   "dropUnique",
@@ -82,6 +84,8 @@ export function applyRenames(from: PhysicalSchema, renames: Renames): PhysicalSc
     if (k !== key) {
       const target = splitKey(k);
       t.name = target.name;
+      if (target.schema) t.schema = target.schema;
+      else delete t.schema;
     }
     const cm = (c: string): string => mapCol(k, c);
     t.columns = t.columns.map((c) => ({ ...c, name: cm(c.name) }));
@@ -110,10 +114,15 @@ function splitKey(key: string): { schema?: string; name: string } {
 
 export interface DiffOptions {
   renames?: Renames;
+  /**
+   * Name of the default schema. Needed to move a table from another schema into the default
+   * one: HANA resolves an unqualified RENAME target against the source table's schema.
+   */
+  defaultSchema?: string;
 }
 
 export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: DiffOptions = {}): MigrationOp[] {
-  const renames = sanitizeRenames(from, to, options.renames ?? emptyRenames());
+  const renames = sanitizeRenames(from, to, options.renames ?? emptyRenames(), options.defaultSchema);
   const pending: Pending[] = [];
   const add = (op: MigrationOp, ...sortParts: string[]): void => {
     pending.push({ op, sortKey: sortParts.join("\u0000") });
@@ -123,11 +132,12 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
   for (const [fromKey, toKey] of Object.entries(renames.tables)) {
     const t = from.tables[fromKey]!;
     const target = to.tables[toKey]!;
+    const moves = (t.schema ?? "") !== (target.schema ?? "");
     add(
       {
         kind: "renameTable",
-        description: `Rename table ${physicalTableRef(t)} to ${quoteIdent(target.name)}`,
-        sql: [renameTableSql(t, target.name)],
+        description: moves ? `Move table ${physicalTableRef(t)} to ${physicalTableRef(target)}` : `Rename table ${physicalTableRef(t)} to ${quoteIdent(target.name)}`,
+        sql: [renameTableSql(t, moves && !target.schema ? { schema: options.defaultSchema, name: target.name } : target)],
         table: toKey,
         precheck: tableExistsCheck(target, false, `table ${physicalTableRef(target)} does not exist yet`),
         postcheck: tableExistsCheck(target, true, `table ${physicalTableRef(target)} exists`),
@@ -167,6 +177,18 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
   }
   const fkTouchesRetyped = (ownerKey: string, fk: PhysicalForeignKey): boolean =>
     fk.columns.some((c) => retypedColumns.has(`${ownerKey}\u0000${c}`)) || fk.refColumns.some((c) => retypedColumns.has(`${refKeyOf(fk)}\u0000${c}`));
+
+  // Primary keys and unique constraints that are dropped (changed or renamed). HANA refuses to drop
+  // a key that a foreign key references, so such foreign keys are dropped first and re-added last.
+  const droppedKeys = new Set<string>();
+  const keyId = (tableKey: string, columns: readonly string[]) => `${tableKey}\u0000${[...columns].sort(cmp).join(",")}`;
+  for (const [key, tb] of Object.entries(b.tables)) {
+    const ta = a.tables[key];
+    if (!ta) continue;
+    if (ta.primaryKey && !samePrimaryKey(ta.primaryKey, tb.primaryKey)) droppedKeys.add(keyId(key, ta.primaryKey.columns));
+    for (const x of uniqueChanges(ta, tb).removed) droppedKeys.add(keyId(key, x.columns));
+  }
+  const fkUsesDroppedKey = (fk: PhysicalForeignKey): boolean => droppedKeys.has(keyId(refKeyOf(fk), fk.refColumns));
 
   // ---- dropped tables ---------------------------------------------------------
   for (const [key, t] of Object.entries(a.tables)) {
@@ -272,10 +294,22 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
       }
     }
 
-    // uniques
-    const u = matchNamed(ta.uniques, tb.uniques, (x, y) => sameColumns(x.columns, y.columns));
+    // uniques (a renamed constraint is dropped and re-added: HANA has no RENAME CONSTRAINT)
+    const u = uniqueChanges(ta, tb);
     for (const x of u.removed) {
-      add({ kind: "dropUnique", description: `Drop unique constraint ${quoteIdent(x.name)} of ${physicalTableRef(tb)}`, sql: [dropConstraintSql(tb, x.name)], table: key }, key, x.name);
+      const renamedTo = u.renamed.get(x);
+      add(
+        {
+          kind: "dropUnique",
+          description: renamedTo
+            ? `Drop unique constraint ${quoteIdent(x.name)} of ${physicalTableRef(tb)} (re-added as ${quoteIdent(renamedTo.name)})`
+            : `Drop unique constraint ${quoteIdent(x.name)} of ${physicalTableRef(tb)}`,
+          sql: [dropConstraintSql(tb, x.name)],
+          table: key,
+        },
+        key,
+        x.name,
+      );
     }
     for (const y of u.added) {
       add(
@@ -291,16 +325,29 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
       );
     }
 
-    // indexes
+    // indexes (renamed in place)
     const ix = matchNamed(ta.indexes, tb.indexes, (x, y) => sameColumns(x.columns, y.columns));
     for (const x of ix.removed) {
       add({ kind: "dropIndex", description: `Drop index ${quoteIdent(x.name)} of ${physicalTableRef(tb)}`, sql: [dropIndexSql(tb.schema, x.name)], table: key }, key, x.name);
     }
     for (const y of ix.added) add(createIndexOp(key, tb, y.name, y.columns), key, y.name);
+    for (const [x, y] of ix.kept) {
+      if (x.name === y.name || isSystemName(x.name) || isSystemName(y.name)) continue;
+      add(
+        {
+          kind: "renameIndex",
+          description: `Rename index ${quoteIdent(x.name)} of ${physicalTableRef(tb)} to ${quoteIdent(y.name)}`,
+          sql: [renameIndexSql(tb.schema, x.name, y.name)],
+          table: key,
+        },
+        key,
+        x.name,
+      );
+    }
 
-    // foreign keys
+    // foreign keys: changed, renamed, on a retyped column, or pointing at a key that is dropped
     const fks = matchNamed(ta.foreignKeys, tb.foreignKeys, sameForeignKey);
-    const recreate = fks.kept.filter(([, y]) => fkTouchesRetyped(key, y));
+    const recreate = fks.kept.filter(([x, y]) => fkTouchesRetyped(key, y) || fkUsesDroppedKey(y) || (x.name !== y.name && !isSystemName(x.name) && !isSystemName(y.name)));
     for (const x of [...fks.removed, ...recreate.map(([x]) => x)]) add(dropFkOp(key, tb, x), key, x.name);
     for (const y of [...fks.added, ...recreate.map(([, y]) => y)]) add(addFkOp(key, tb, y), key, y.name);
   }
@@ -311,15 +358,16 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
   return pending.map((p) => p.op);
 }
 
-function sanitizeRenames(from: PhysicalSchema, to: PhysicalSchema, renames: Renames): Renames {
+function sanitizeRenames(from: PhysicalSchema, to: PhysicalSchema, renames: Renames, defaultSchema?: string): Renames {
   const out = emptyRenames();
   const targets = new Set<string>();
   for (const [fromKey, toKey] of Object.entries(renames.tables).sort(([x], [y]) => cmp(x, y))) {
     const t = from.tables[fromKey];
     const target = to.tables[toKey];
     if (!t || !target || fromKey === toKey || targets.has(toKey)) continue;
-    if ((t.schema ?? "") !== (target.schema ?? "")) continue; // RENAME TABLE cannot move schemas
     if (from.tables[toKey] && !renames.tables[toKey]) continue; // target name still taken
+    // Moving into the default schema needs its name (see DiffOptions.defaultSchema); without it, drop + create.
+    if (t.schema && !target.schema && !defaultSchema) continue;
     if (to.tables[fromKey]) continue; // source still wanted under its old name
     out.tables[fromKey] = toKey;
     targets.add(toKey);
@@ -385,6 +433,23 @@ function alterColumnOps(key: string, t: PhysicalTable, ca: PhysicalColumn, cb: P
   return [op];
 }
 
+function isSystemName(name: string): boolean {
+  return name.startsWith("_SYS_");
+}
+
+/** Unique constraint changes; constraints that only changed name are removed and re-added. */
+function uniqueChanges<T extends { name: string; columns: string[] }>(ta: { uniques: T[] }, tb: { uniques: T[] }): { removed: T[]; added: T[]; renamed: Map<T, T> } {
+  const u = matchNamed(ta.uniques, tb.uniques, (x, y) => sameColumns(x.columns, y.columns));
+  const renamed = new Map<T, T>();
+  for (const [x, y] of u.kept) {
+    if (x.name === y.name || isSystemName(x.name) || isSystemName(y.name)) continue;
+    renamed.set(x, y);
+    u.removed.push(x);
+    u.added.push(y);
+  }
+  return { removed: u.removed, added: u.added, renamed };
+}
+
 function samePrimaryKey(a: PhysicalPrimaryKey | null, b: PhysicalPrimaryKey | null): boolean {
   if (!a || !b) return a === b;
   if (!sameColumns(a.columns, b.columns)) return false;
@@ -406,7 +471,7 @@ function sameForeignKey(x: PhysicalForeignKey, y: PhysicalForeignKey): boolean {
 /**
  * Matches objects by name first, then (leftovers) by structure. Objects matched by name but
  * structurally different are reported as removed + added. Objects matched only by structure
- * are kept (a renamed constraint alone is not migrated).
+ * are returned as kept pairs whose names differ; callers decide how to rename them.
  */
 function matchNamed<T extends { name: string }>(
   from: readonly T[],

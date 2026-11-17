@@ -27,10 +27,10 @@ test("model renamed in the schema but mapped to the same table keeps field renam
   assert.deepEqual(renamesFromContracts(a, b), { tables: {}, columns: { USERS: { MAIL: "EMAIL" } } });
 });
 
-test("moving a table to another schema is not a rename", () => {
+test("moving a model to another schema is a table move", () => {
   const a = contract([model("User", [col("id", "Int", { id: true })], { map: "USERS" })]);
   const b = contract([model("User", [col("id", "Int", { id: true })], { map: "USERS", schema: "OTHER" })]);
-  assert.deepEqual(renamesFromContracts(a, b).tables, {});
+  assert.deepEqual(renamesFromContracts(a, b).tables, { USERS: "OTHER.USERS" });
 });
 
 test("candidate renames: table with identical columns, column with the same type", () => {

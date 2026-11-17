@@ -46,7 +46,8 @@ export function renamesFromContracts(
   for (const [p, n] of pairs) {
     const fromKey = modelTableKey(p, defaultSchema);
     const toKey = modelTableKey(n, defaultSchema);
-    if (fromKey !== toKey && (p.schema ?? defaultSchema ?? "") === (n.schema ?? defaultSchema ?? "")) out.tables[fromKey] = toKey;
+    // Covers @@map changes and @@schema moves: HANA's RENAME TABLE can move a table between schemas.
+    if (fromKey !== toKey) out.tables[fromKey] = toKey;
     const cols: Record<string, string> = {};
     for (const nf of columnFields(n)) {
       const pf = columnFields(p).find((f) => f.name === nf.name);

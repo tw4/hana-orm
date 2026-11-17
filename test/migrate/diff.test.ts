@@ -151,10 +151,11 @@ test("rename keeps foreign keys that point at the renamed table", () => {
 });
 
 test("invalid renames are ignored (falls back to drop + create)", () => {
-  const from = schema(table("A"));
-  const to = schema(table("B", { schema: "OTHER" }));
-  const ops = diffSchemas(from, to, { renames: { tables: { A: "OTHER.B" }, columns: {} } });
-  assert.deepEqual(ops.map((o) => o.kind), ["dropTable", "createTable"]);
+  // target name is still taken by a table that is not renamed itself
+  const from = schema(table("A"), table("B"));
+  const to = schema(table("B"));
+  const ops = diffSchemas(from, to, { renames: { tables: { A: "B" }, columns: {} } });
+  assert.deepEqual(ops.map((o) => o.kind), ["dropTable"]);
 });
 
 test("type changes: widening is safe, narrowing and incompatible are destructive", () => {
@@ -207,7 +208,7 @@ test("identity change re-creates the column (destructive)", () => {
   assert.equal(ops[0]!.destructive, true);
 });
 
-test("uniques and indexes: add, drop, change columns; names-only differences are ignored", () => {
+test("uniques and indexes: add, drop, change columns; renamed index uses RENAME INDEX", () => {
   const base = { columns: [{ name: "ID", type: "INTEGER", nullable: false }, { name: "A", type: "INTEGER", nullable: false }, { name: "B", type: "INTEGER", nullable: false }] };
   const from = schema(table("T", { ...base, uniques: [{ name: "UQ_OLD", columns: ["A"] }], indexes: [{ name: "IX_1", columns: ["A"] }, { name: "IX_SYS", columns: ["B"] }] }));
   const to = schema(table("T", { ...base, uniques: [{ name: "UQ_NEW", columns: ["A", "B"] }], indexes: [{ name: "IX_1", columns: ["A", "B"] }, { name: "IX_RENAMED", columns: ["B"] }] }));
@@ -215,6 +216,7 @@ test("uniques and indexes: add, drop, change columns; names-only differences are
   assert.deepEqual(
     ops.map((o) => o.sql[0]),
     [
+      'RENAME INDEX "IX_SYS" TO "IX_RENAMED"',
       'DROP INDEX "IX_1"',
       'ALTER TABLE "T" DROP CONSTRAINT "UQ_OLD"',
       'ALTER TABLE "T" ADD CONSTRAINT "UQ_NEW" UNIQUE ("A", "B")',
@@ -285,4 +287,57 @@ test("emptyRenames and relation fields without FK produce nothing extra", () => 
   const p = contractToPhysical(c);
   assert.equal(p.tables["B"]!.foreignKeys[0]!.name, "FK_B_aId");
   assert.deepEqual(diffSchemas(p, p, { renames: emptyRenames() }), []);
+});
+
+test("renamed unique and foreign key constraints are dropped and re-added (no RENAME CONSTRAINT in HANA)", () => {
+  const cols = [{ name: "ID", type: "INTEGER", nullable: false }, { name: "E", type: "NVARCHAR(10)", nullable: false }, { name: "P", type: "INTEGER", nullable: true }];
+  const fk = (name: string) => ({ name, columns: ["P"], refTable: "P", refColumns: ["ID"], onDelete: "RESTRICT" as const, onUpdate: "RESTRICT" as const });
+  const from = schema(table("P"), table("T", { columns: cols, uniques: [{ name: "UQ_OLD", columns: ["E"] }], foreignKeys: [fk("FK_OLD")] }));
+  const to = schema(table("P"), table("T", { columns: cols, uniques: [{ name: "UQ_NEW", columns: ["E"] }], foreignKeys: [fk("FK_NEW")] }));
+  const ops = diffSchemas(from, to);
+  assert.deepEqual(ops.map((o) => o.sql[0]), [
+    'ALTER TABLE "T" DROP CONSTRAINT "FK_OLD"',
+    'ALTER TABLE "T" DROP CONSTRAINT "UQ_OLD"',
+    'ALTER TABLE "T" ADD CONSTRAINT "UQ_NEW" UNIQUE ("E")',
+    'ALTER TABLE "T" ADD CONSTRAINT "FK_NEW" FOREIGN KEY ("P") REFERENCES "P" ("ID") ON UPDATE RESTRICT ON DELETE RESTRICT',
+  ]);
+  assert.ok(ops.every((o) => !o.destructive));
+  assert.match(ops[1]!.description, /re-added as "UQ_NEW"/);
+});
+
+test("system-generated constraint names are never renamed", () => {
+  const from = schema(table("T", { indexes: [{ name: "_SYS_IX_1", columns: ["ID"] }], uniques: [{ name: "_SYS_UQ_1", columns: ["ID"] }] }));
+  const to = schema(table("T", { indexes: [{ name: "IX_T_ID", columns: ["ID"] }], uniques: [{ name: "UQ_T_ID", columns: ["ID"] }] }));
+  assert.deepEqual(diffSchemas(from, to), []);
+});
+
+test("changing a referenced primary key re-creates the foreign keys that point at it", () => {
+  const parentCols = [{ name: "ID", type: "INTEGER", nullable: false }, { name: "K", type: "INTEGER", nullable: false }];
+  const fk = { name: "FK_C_P", columns: ["PID"], refTable: "P", refColumns: ["ID"], onDelete: "RESTRICT" as const, onUpdate: "RESTRICT" as const };
+  const child = table("C", { columns: [{ name: "ID", type: "INTEGER", nullable: false }, { name: "PID", type: "INTEGER", nullable: false }], foreignKeys: [fk] });
+  const from = schema(table("P", { columns: parentCols, primaryKey: { name: "PK_P", columns: ["ID"] }, uniques: [] }), child);
+  const to = schema(table("P", { columns: parentCols, primaryKey: { name: "PK_P_NEW", columns: ["ID"] } }), child);
+  assert.deepEqual(diffSchemas(from, to).map((o) => o.sql[0]), [
+    'ALTER TABLE "C" DROP CONSTRAINT "FK_C_P"',
+    'ALTER TABLE "P" DROP PRIMARY KEY',
+    'ALTER TABLE "P" ADD CONSTRAINT "PK_P_NEW" PRIMARY KEY ("ID")',
+    'ALTER TABLE "C" ADD CONSTRAINT "FK_C_P" FOREIGN KEY ("PID") REFERENCES "P" ("ID") ON UPDATE RESTRICT ON DELETE RESTRICT',
+  ]);
+});
+
+test("moving a table to another schema uses a qualified RENAME TABLE and keeps its data", () => {
+  const from = schema(table("USERS"));
+  const to = schema(table("USERS", { schema: "ARCHIVE" }));
+  const ops = diffSchemas(from, to, { renames: { tables: { USERS: "ARCHIVE.USERS" }, columns: {} } });
+  assert.deepEqual(ops.map((o) => o.sql[0]), ['RENAME TABLE "USERS" TO "ARCHIVE"."USERS"']);
+  assert.match(ops[0]!.description, /^Move table "USERS" to "ARCHIVE"\."USERS"$/);
+  assert.ok(!ops[0]!.destructive);
+});
+
+test("moving a table into the default schema qualifies the target, or falls back without its name", () => {
+  const from = schema(table("USERS", { schema: "ARCHIVE" }));
+  const to = schema(table("USERS"));
+  const renames = { tables: { "ARCHIVE.USERS": "USERS" }, columns: {} };
+  assert.deepEqual(diffSchemas(from, to, { renames, defaultSchema: "APP" }).map((o) => o.sql[0]), ['RENAME TABLE "ARCHIVE"."USERS" TO "APP"."USERS"']);
+  assert.deepEqual(diffSchemas(from, to, { renames }).map((o) => o.kind), ["dropTable", "createTable"]);
 });

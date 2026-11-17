@@ -1,5 +1,6 @@
 /** Implementations of the `db` and `migrate` CLI commands. */
 
+import { nextMigrationStamp } from "./files.ts";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -227,7 +228,7 @@ export async function planBetween(
     const candidates = findRenameCandidates(fromPhys, toPhys, renames);
     if (candidates.tables.length || candidates.columns.length) renames = withRenames(renames, await confirm(candidates));
   }
-  return diffSchemas(fromPhys, toPhys, { renames });
+  return diffSchemas(fromPhys, toPhys, { renames, ...opts });
 }
 
 export async function migratePlan(args: ParsedArgs, ctx: CliContext, now: () => Date = () => new Date()): Promise<number> {
@@ -244,11 +245,7 @@ export async function migratePlan(args: ParsedArgs, ctx: CliContext, now: () => 
     return 1;
   }
   const prev = await lastSnapshot(migrations);
-  const id = `${timestampId(now())}_${sanitizeMigrationName(rawName)}`;
-  if (migrations.some((m) => m.id >= id)) {
-    ctx.warn(`A migration with an id at or after ${id} already exists; wait a second and retry.`);
-    return 1;
-  }
+  const id = `${nextMigrationStamp(now(), migrations.map((m) => m.id))}_${sanitizeMigrationName(rawName)}`;
 
   if (boolFlag(args, "empty")) {
     const base = prev ?? { version: 1 as const, hash: EMPTY_CONTRACT_HASH, models: {}, enums: {} };

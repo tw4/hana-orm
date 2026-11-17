@@ -154,7 +154,15 @@ test("schema changes become a second migration that keeps data", { skip }, async
 
 test("destructive changes are refused without --allow-destructive", { skip }, async () => {
   writeFileSync(schemaFile, v2.replace(`  phone     String?   @db.NVarChar(30)\n`, ""));
-  assert.equal(await cli("migrate", "plan", "--name", "drop_phone"), 1);
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (m: string) => warnings.push(m);
+  try {
+    assert.equal(await cli("migrate", "plan", "--name", "drop_phone"), 1);
+  } finally {
+    console.warn = origWarn;
+  }
+  assert.match(warnings.join(" "), /allow-destructive/, "refused because of the destructive change");
   assert.equal(readdirSync(join(dir, "migrations")).length, 2);
   writeFileSync(schemaFile, v2);
 });
@@ -164,6 +172,37 @@ test("drift is detected when the database is changed by hand", { skip }, async (
   assert.equal(await cli("migrate", "status"), 1);
   await admin.execute(`ALTER TABLE "${schemaName}"."ACCOUNTS" DROP ("NOTE")`);
   assert.equal(await cli("migrate", "status"), 0);
+});
+
+test("renaming a unique constraint and moving a table to another schema keep the data", { skip }, async () => {
+  const otherSchema = `${schemaName}_ARCH`;
+  await admin.execute(`CREATE SCHEMA "${otherSchema}"`);
+  try {
+    await admin.execute(`INSERT INTO "${schemaName}"."AUDIT_LOG" ("message") VALUES ('kept')`);
+    const v3 = v2
+      .replace("  @@unique([accountId, name])", '  @@unique([accountId, name], map: "UQ_PROJECT_NAME")')
+      .replace('  @@map("AUDIT_LOG")', `  @@map("AUDIT_LOG")
+  @@schema("${otherSchema}")`);
+    writeFileSync(schemaFile, v3);
+    assert.equal(await cli("migrate", "plan", "--name", "move_audit"), 0);
+    const third = readdirSync(join(dir, "migrations")).sort()[2]!;
+    const sql = readFileSync(join(dir, "migrations", third, "migration.sql"), "utf8");
+    // tables of the default schema stay unqualified and resolve against the connection's schema
+    assert.ok(sql.includes(`RENAME TABLE "AUDIT_LOG" TO "${otherSchema}"."AUDIT_LOG"`), sql);
+    assert.match(sql, /DROP CONSTRAINT/);
+    assert.match(sql, /ADD CONSTRAINT "UQ_PROJECT_NAME" UNIQUE/);
+    assert.equal(await cli("migrate", "deploy"), 0);
+    assert.equal(await cli("migrate", "status"), 0);
+    const moved = await admin.query<{ M: string }>(`SELECT "message" AS "M" FROM "${otherSchema}"."AUDIT_LOG"`);
+    assert.deepEqual(moved.map((r) => r.M), ["kept"]);
+    // move it back so the remaining tests see the original layout
+    writeFileSync(schemaFile, v3.replace(`
+  @@schema("${otherSchema}")`, ""));
+    assert.equal(await cli("migrate", "plan", "--name", "move_back"), 0);
+    assert.equal(await cli("migrate", "deploy"), 0);
+  } finally {
+    await admin.execute(`DROP SCHEMA "${otherSchema}" CASCADE`).catch(() => {});
+  }
 });
 
 test("db pull reproduces an equivalent schema", { skip }, async () => {
