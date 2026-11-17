@@ -11,7 +11,9 @@
 #   - HANA deletes password.json after the first start. To start from scratch, empty
 #     .local/hxe and create password.json again.
 #   - It needs ~10 GB of free disk; with less, the log volume fills up and the start hangs.
-#   - The image is amd64 only. On Apple Silicon it runs under emulation and is slow.
+#   - The image is amd64 only. On Apple Silicon the tenant database does not start under
+#     emulation; run the container on an amd64 machine and set HANA_HOST to it in .env.test.
+#     The connection is not encrypted, so use it on a trusted network only.
 #   - docker/hana-seccomp.json is Docker's default seccomp profile (moby v27.3.1) plus the
 #     NUMA syscalls HANA needs (mbind, move_pages, get/set_mempolicy).
 #
