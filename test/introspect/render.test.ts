@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildPhysicalFromCatalog } from "../../src/introspect/catalog.ts";
 import { renderSchema, mapHanaType } from "../../src/introspect/render.ts";
-import { camelCase, pascalCase, plural, words } from "../../src/introspect/naming.ts";
+import { backRelationName, camelCase, pascalCase, plural, singular, words } from "../../src/introspect/naming.ts";
 import { splitBlocks } from "../../src/introspect/blocks.ts";
 import { contractToPhysical } from "../../src/migrate/contract-to-physical.ts";
 import { diffSchemas } from "../../src/migrate/diff.ts";
@@ -29,6 +29,47 @@ test("naming", () => {
   assert.equal(plural("Orders"), "Orders");
   assert.equal(plural("category"), "categories");
   assert.equal(plural("address"), "addresses");
+});
+
+test("back relation names for several foreign keys between two models", () => {
+  for (const w of ["order", "category", "address", "box", "status"]) assert.equal(singular(plural(w)), w === "status" ? "statu" : w);
+  assert.equal(backRelationName("customer", "Orders", "Customers", false), "orders");
+  assert.equal(backRelationName("billingCustomer", "Orders", "Customers", false), "billingOrders");
+  assert.equal(backRelationName("createdBy", "Items", "Users", false), "createdItems");
+  assert.equal(backRelationName("createdByUser", "Items", "User", false), "createdItems");
+  assert.equal(backRelationName("approver", "Items", "Users", false), "approverItems");
+  assert.equal(backRelationName("primaryContact", "Account", "Contact", true), "primaryAccount");
+  assert.equal(backRelationName("By", "Items", "Users", false), "ByItems");
+});
+
+test("several audit columns to the same table get readable names on both sides", () => {
+  const fk = (col: string) => ({ name: `FK_ITEMS_${col}`, columns: [col], refTable: "USERS", refColumns: ["ID"], onDelete: "RESTRICT" as const, onUpdate: "RESTRICT" as const });
+  const p = {
+    tables: {
+      USERS: { name: "USERS", columns: [{ name: "ID", type: "INTEGER", nullable: false }], primaryKey: { name: "PK_USERS", columns: ["ID"] }, uniques: [], indexes: [], foreignKeys: [] },
+      ITEMS: {
+        name: "ITEMS",
+        columns: [
+          { name: "ID", type: "INTEGER", nullable: false },
+          { name: "CREATED_BY_ID", type: "INTEGER", nullable: false },
+          { name: "UPDATED_BY", type: "INTEGER", nullable: true },
+        ],
+        primaryKey: { name: "PK_ITEMS", columns: ["ID"] },
+        uniques: [],
+        indexes: [],
+        foreignKeys: [fk("CREATED_BY_ID"), fk("UPDATED_BY")],
+      },
+    },
+  };
+  const src = renderSchema(p, { defaultSchema: "S" }).source;
+  assert.match(block(src, "Items"), /  createdBy +Users +@relation\("Items_createdBy", fields: \[createdById\], references: \[id\]\)/);
+  assert.match(block(src, "Items"), /  updatedByUser +Users\? +@relation\("Items_updatedByUser", fields: \[updatedBy\], references: \[id\]\)/);
+  assert.match(block(src, "Users"), /  createdItems +Items\[\] +@relation\("Items_createdBy"\)/);
+  assert.match(block(src, "Users"), /  updatedItems +Items\[\] +@relation\("Items_updatedByUser"\)/);
+  const c = compileSchema(src);
+  assert.deepEqual(diffSchemas(contractToPhysical(c, { defaultSchema: "S" }), p), []);
+  // a second pull keeps the names
+  assert.equal(renderSchema(p, { existingSource: src, defaultSchema: "S", inScope: () => true }).source, src);
 });
 
 test("HANA types map to schema types and @db attributes", () => {
@@ -61,8 +102,8 @@ test("fresh pull: models, relations, keys, defaults and views", () => {
   // two FKs between the same pair → named relations on both sides
   assert.match(src, /billingCustomer +Customers\? +@relation\("Orders_billingCustomer", fields: \[billingCustomerId\], references: \[id\], onDelete: SetNull, map: "FK_ORDERS_BILLING"\)/);
   assert.match(src, /customer +Customers +@relation\("Orders_customer", fields: \[customerId\], references: \[id\], onDelete: Cascade, map: "FK_ORDERS_CUSTOMER"\)/);
-  assert.match(src, /billingCustomerOrders +Orders\[\] +@relation\("Orders_billingCustomer"\)/);
-  assert.match(src, /customerOrders +Orders\[\] +@relation\("Orders_customer"\)/);
+  assert.match(src, /billingOrders +Orders\[\] +@relation\("Orders_billingCustomer"\)/);
+  assert.match(src, /  orders +Orders\[\] +@relation\("Orders_customer"\)/);
   // single FK → unnamed relation; default FK name is not repeated
   assert.match(src, /  order +Orders +@relation\(fields: \[orderId\], references: \[id\]\)\n/);
   assert.match(src, /  orderItems +OrderItems\[\]\n/);

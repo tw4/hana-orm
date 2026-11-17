@@ -14,7 +14,7 @@ import type { PhysicalColumn, PhysicalForeignKey, PhysicalSchema, PhysicalTable,
 import { MAX_IDENT_LENGTH, refKeyOf, sameColumns, tableKey } from "../migrate/physical.ts";
 import { parseType } from "../migrate/types.ts";
 import { splitBlocks } from "./blocks.ts";
-import { camelCase, lowerFirst, pascalCase, plural, quoteString, uniqueName, upperFirst } from "./naming.ts";
+import { backRelationName, camelCase, lowerFirst, pascalCase, plural, quoteString, singular, uniqueName, upperFirst } from "./naming.ts";
 
 export interface RenderOptions {
   /** Current schema file text, if any. */
@@ -458,8 +458,12 @@ function buildRelations(plans: Map<string, ModelPlan>, warnings: string[]): void
       owner.taken.add(ownerName);
       relationName = relationNameArg(attr(exOwner.attributes, "relation"));
     } else {
-      let base = r.ownerFields.length === 1 ? r.ownerFields[0]!.replace(/(_id|Id|ID|_ID)$/, "") : "";
-      if (!base || base === r.ownerFields[0] || owner.taken.has(base)) base = lowerFirst(target.name);
+      const field = r.ownerFields.length === 1 ? r.ownerFields[0]! : "";
+      let base = field.replace(/(_id|Id|ID|_ID)$/, "");
+      // Several FKs to the same model: a column without an id suffix (`CREATED_BY`) gives
+      // `createdByUser` instead of `users`, `users2`, …
+      if (needsName && field && (base === field || owner.taken.has(base))) base = `${field}${upperFirst(singular(target.name))}`;
+      if (!base || base === field || owner.taken.has(base)) base = lowerFirst(target.name);
       ownerName = uniqueName(base, owner.taken);
     }
     if (!relationName && needsName) relationName = `${owner.name}_${ownerName}`;
@@ -490,7 +494,13 @@ function buildRelations(plans: Map<string, ModelPlan>, warnings: string[]): void
       target.taken.add(backName);
     } else {
       const ownerLower = lowerFirst(owner.name);
-      const base = !needsName ? (oneToOne ? ownerLower : plural(ownerLower)) : `${ownerName}${upperFirst(oneToOne ? owner.name : plural(owner.name))}`;
+      const base = self
+        ? `${ownerName}${upperFirst(oneToOne ? owner.name : plural(owner.name))}`
+        : needsName
+          ? backRelationName(ownerName, owner.name, target.name, oneToOne)
+          : oneToOne
+            ? ownerLower
+            : plural(ownerLower);
       backName = uniqueName(base, target.taken);
     }
     // Keep @ignore from the existing schema. A relation must be ignored when it touches an
