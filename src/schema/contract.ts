@@ -76,6 +76,8 @@ export interface ScalarFieldDef {
   default?: DefaultDef;
   updatedAt: boolean;
   nativeType?: NativeType;
+  /** `@ignore`: kept for migrations, hidden from the client. */
+  ignored?: boolean;
   doc?: string;
 }
 
@@ -91,6 +93,8 @@ export interface EnumFieldDef {
   default?: DefaultDef;
   updatedAt: false;
   nativeType?: NativeType;
+  /** `@ignore`: kept for migrations, hidden from the client. */
+  ignored?: boolean;
   doc?: string;
 }
 
@@ -114,6 +118,8 @@ export interface RelationFieldDef {
   onUpdate?: ReferentialAction;
   /** Foreign key constraint name (owner side only). */
   fkName?: string;
+  /** `@ignore`: the foreign key is kept for migrations, the field is hidden from the client. */
+  ignored?: boolean;
   doc?: string;
 }
 
@@ -151,6 +157,8 @@ export interface ModelDef {
    * migrations and drift detection know the column exists.
    */
   ignoredColumns?: IgnoredColumnDef[];
+  /** `@@ignore`: the table is kept for migrations, the model is hidden from the client. */
+  ignored?: boolean;
   doc?: string;
 }
 
@@ -197,4 +205,28 @@ export function getColumn(model: ModelDef, name: string): ColumnFieldDef {
   const f = model.fields.find((x) => x.name === name);
   if (!f || f.kind === "relation") throw new Error(`Unknown column field '${name}' on model '${model.name}'`);
   return f;
+}
+
+/**
+ * The part of a contract the client sees: models with `@@ignore` and fields with `@ignore`
+ * are removed, and so are unique constraints and indexes that use an ignored field. The hash
+ * is kept, so it still identifies the full data model. Returns `contract` itself when nothing
+ * is ignored.
+ */
+export function clientContract(contract: Contract): Contract {
+  const anyIgnored = Object.values(contract.models).some((m) => m.ignored || m.fields.some((f) => f.ignored));
+  if (!anyIgnored) return contract;
+  const models: Record<string, ModelDef> = {};
+  for (const [name, m] of Object.entries(contract.models)) {
+    if (m.ignored) continue;
+    const hidden = new Set(m.fields.filter((f) => f.ignored).map((f) => f.name));
+    const visible = (fields: readonly string[]): boolean => fields.every((f) => !hidden.has(f));
+    models[name] = {
+      ...m,
+      fields: m.fields.filter((f) => !f.ignored),
+      uniques: m.uniques.filter((u) => visible(u.fields)),
+      indexes: m.indexes.filter((i) => visible(i.fields)),
+    };
+  }
+  return { ...contract, models };
 }

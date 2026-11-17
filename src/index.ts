@@ -5,5 +5,6 @@ export { SchemaError, type Diagnostic } from "./schema/errors.ts";
 export { formatSchema } from "./schema/format.ts";
 export { compileSchemaSources, readSchemaSources, schemaFiles, type SchemaSource } from "./schema/files.ts";
 export type * from "./schema/contract.ts";
+export { clientContract } from "./schema/contract.ts";
 export type * from "./schema/ast.ts";
 export { generateClient, type GenerateOptions } from "./generator/client.ts";

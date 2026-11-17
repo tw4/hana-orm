@@ -1,4 +1,5 @@
 import type { Contract, ModelDef } from "../schema/contract.ts";
+import { clientContract } from "../schema/contract.ts";
 import { formatTimestamp } from "./codec.ts";
 import { resolveConnectionConfig, resolveDefaultSchema } from "./config.ts";
 import type { Driver, QueryEvent, Queryable, TransactionOptions } from "./driver.ts";
@@ -79,7 +80,7 @@ export class BaseClient {
   /** @internal */ _extensions: ExtensionArgs[];
 
   constructor(contract: Contract, options: ClientOptions = {}) {
-    this._shared = { contract, options, engine: undefined, driver: options.driver };
+    this._shared = { contract: clientContract(contract), options, engine: undefined, driver: options.driver };
     this._tx = undefined;
     this._extensions = [];
     this._install();

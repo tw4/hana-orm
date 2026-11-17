@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Arg, Attribute, ConfigBlock, EnumDecl, FieldDecl, ModelDecl, Position, SchemaAst, Value } from "./ast.ts";
 import {
   CONTRACT_VERSION,
+  relationFields,
   SCALAR_TYPES,
   type ConfigValue,
   type Contract,
@@ -151,6 +152,9 @@ export function buildContract(ast: SchemaAst, options: BuildOptions = {}): Contr
         case "map":
         case "schema":
           break;
+        case "ignore":
+          if (ignoreAttr(a, err)) model.ignored = true;
+          break;
         case "id": {
           const fields = fieldListArg(a, model, err);
           if (model.primaryKey) err(`Model '${m.name}' has more than one primary key`, a.pos);
@@ -220,6 +224,7 @@ export function buildContract(ast: SchemaAst, options: BuildOptions = {}): Contr
   }
 
   resolveRelations(pending, models, err);
+  checkIgnored(models, modelDecls, err);
 
   if (diags.length) throw new SchemaError(diags, options.file);
 
@@ -272,7 +277,11 @@ function buildField(
 
   if (isModel) {
     if (f.list && f.optional) err(`Relation list '${f.name}' cannot be optional`, f.pos);
-    for (const a of f.attributes) if (a.name !== "relation") err(`Attribute '@${a.name}' is not allowed on relation field '${f.name}'`, a.pos);
+    let ignored = false;
+    for (const a of f.attributes) {
+      if (a.name === "ignore") ignored = ignoreAttr(a, err) || ignored;
+      else if (a.name !== "relation") err(`Attribute '@${a.name}' is not allowed on relation field '${f.name}'`, a.pos);
+    }
     return {
       kind: "relation",
       name: f.name,
@@ -283,6 +292,7 @@ function buildField(
       owner: false,
       localFields: [],
       targetFields: [],
+      ...(ignored ? { ignored: true } : {}),
       ...doc,
     };
   }
@@ -298,6 +308,7 @@ function buildField(
   let dflt: DefaultDef | undefined;
   let nativeType: NativeType | undefined;
   let dbName = f.name;
+  let ignored = false;
 
   for (const a of f.attributes) {
     if (a.name.startsWith("db.")) {
@@ -326,13 +337,16 @@ function buildField(
       case "relation":
         err(`@relation is only valid on relation fields`, a.pos);
         break;
+      case "ignore":
+        ignored = ignoreAttr(a, err) || ignored;
+        break;
       default:
         err(`Unknown attribute '@${a.name}' on field '${f.name}'`, a.pos);
     }
   }
   if (dbName.length > MAX_IDENT) err(`Column name '${dbName}' is longer than ${MAX_IDENT} characters`, f.pos);
 
-  const base = { name: f.name, dbName, optional: f.optional, id, unique, ...(dflt ? { default: dflt } : {}), ...(nativeType ? { nativeType } : {}), ...doc };
+  const base = { name: f.name, dbName, optional: f.optional, id, unique, ...(dflt ? { default: dflt } : {}), ...(nativeType ? { nativeType } : {}), ...(ignored ? { ignored: true } : {}), ...doc };
   if (isEnum) return { kind: "enum", type: f.type, updatedAt: false, ...base };
   return { kind: "scalar", type: f.type as ScalarType, updatedAt, ...base };
 }
@@ -465,6 +479,45 @@ function resolveRelations(pending: PendingRelation[], models: Record<string, Mod
     field.targetFields = owner.localFields;
     if (!field.list && !field.optional) err(`The non-foreign-key side '${model.name}.${field.name}' of a one-to-one relation must be optional`, decl.pos);
     used.add(p);
+  }
+}
+
+function ignoreAttr(a: Attribute, err: Err): boolean {
+  if (a.args.length) {
+    err(`@ignore takes no arguments`, a.pos);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Ignored parts must not be reachable from the client: a primary key cannot be ignored, a
+ * relation that uses an ignored foreign key field or points to an ignored model must be
+ * ignored too, and both sides of a relation are ignored together.
+ */
+function checkIgnored(models: Record<string, ModelDef>, decls: readonly ModelDecl[], err: Err): void {
+  for (const model of Object.values(models)) {
+    if (model.ignored) continue;
+    const pos = decls.find((d) => d.name === model.name)?.pos;
+    const ignoredFields = new Set(model.fields.filter((f) => f.ignored).map((f) => f.name));
+    for (const name of model.primaryKey?.fields ?? []) {
+      if (ignoredFields.has(name)) err(`Primary key field '${model.name}.${name}' cannot be ignored; ignore the model with @@ignore instead`, pos);
+    }
+    for (const rel of relationFields(model)) {
+      if (rel.ignored) continue;
+      const target = models[rel.model];
+      if (target?.ignored) {
+        err(`Relation '${model.name}.${rel.name}' points to the ignored model '${target.name}'; add @ignore to the field`, pos);
+        continue;
+      }
+      const hiddenFk = rel.owner ? rel.localFields.find((n) => ignoredFields.has(n)) : undefined;
+      if (hiddenFk) {
+        err(`Relation '${model.name}.${rel.name}' uses the ignored field '${hiddenFk}'; add @ignore to the relation field too`, pos);
+        continue;
+      }
+      const other = target ? relationFields(target).find((r) => r.relationName === rel.relationName && r !== rel && r.model === model.name) : undefined;
+      if (other?.ignored) err(`Relation '${model.name}.${rel.name}' is the other side of the ignored field '${target!.name}.${other.name}'; ignore both sides`, pos);
+    }
   }
 }
 
