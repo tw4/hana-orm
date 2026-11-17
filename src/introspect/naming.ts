@@ -50,6 +50,34 @@ export function plural(word: string): string {
   return `${word}s`;
 }
 
+/** Naive English singular, the inverse of `plural` for common endings. */
+export function singular(word: string): string {
+  if (/[^aeiou]ies$/i.test(word)) return `${word.slice(0, -3)}y`;
+  if (/(ss|x|z|ch|sh)es$/i.test(word)) return word.slice(0, -2);
+  if (/[^s]s$/i.test(word)) return word.slice(0, -1);
+  return word;
+}
+
+/**
+ * Field name for the back side of one of several relations between two models, derived from
+ * the owner field: `billingCustomer` (→ Customers) gives `billingOrders`, `createdBy` gives
+ * `createdOrders`, and the field named after the target (`customer`) gives plain `orders`.
+ */
+export function backRelationName(ownerField: string, ownerModel: string, targetModel: string, oneToOne: boolean): string {
+  const ownerPart = upperFirst(oneToOne ? ownerModel : plural(ownerModel));
+  let prefix = ownerField;
+  for (const t of [targetModel, singular(targetModel)]) {
+    const suffix = upperFirst(t);
+    if (lowerFirst(prefix) === lowerFirst(suffix)) return lowerFirst(ownerPart);
+    if (prefix.length > suffix.length && prefix.endsWith(suffix)) {
+      prefix = prefix.slice(0, -suffix.length);
+      break;
+    }
+  }
+  if (prefix.length > 2 && prefix.endsWith("By")) prefix = prefix.slice(0, -2);
+  return `${prefix}${ownerPart}`;
+}
+
 /** Returns `base`, or `base2`, `base3`, … — the first name not in `taken`. Adds it to `taken`. */
 export function uniqueName(base: string, taken: Set<string>): string {
   let name = base;
