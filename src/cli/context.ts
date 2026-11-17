@@ -12,6 +12,8 @@ export interface CliContext {
   loadContract(): Promise<Contract>;
   /** Opens a driver using the schema's datasource (or env vars when the schema has none). */
   connect(): Promise<Driver>;
+  /** Host name the connection would use (from the datasource or env), without connecting. */
+  connectionHost(): Promise<string>;
   /** Default database schema from the datasource, if configured. */
   defaultSchema(): Promise<string | undefined>;
   log(message: string): void;

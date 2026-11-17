@@ -51,6 +51,9 @@ export async function makeCtx(): Promise<TestCtx> {
     async defaultSchema() {
       return undefined;
     },
+    async connectionHost() {
+      return ctx.host;
+    },
     log(m) {
       ctx.logs.push(m);
     },
