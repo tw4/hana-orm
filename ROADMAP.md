@@ -77,7 +77,7 @@ Package layout (single package first, split later if needed):
   logging, connection config from `.env` (`HANA_HOST`, `HANA_PORT`, `HANA_USER`, …) or URL.
 - Integration test harness: local temporary tables (`#TABLE`), or a dedicated test schema,
   so tests never write to production tables.
-- Open source hygiene: MIT license, contributing and security guides, secret scanning in
+- Open source hygiene: Apache 2.0 license, contributing and security guides, secret scanning in
   CI, `.env` never committed, no real host names, users or business data in fixtures.
 
 ### M1 – Schema language and contract

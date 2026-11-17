@@ -6,4 +6,4 @@ A type-safe TypeScript ORM for SAP HANA with a Prisma-like schema, a typed clien
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)
