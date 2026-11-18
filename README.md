@@ -462,6 +462,21 @@ await db.insert(user).values([{ email: "a@example.com" }]); // same defaults as 
   driver, codecs and transactions of the client (`tx.select()` inside `$transaction`).
 - HANA has no `RETURNING`, so `insert`/`update`/`delete` resolve with the affected row count.
 
+#### `sql` in the object API
+
+An `` sql`…` `` fragment can stand for a condition in `where` of the object API: as the whole
+`where`, inside `AND` / `OR` / `NOT`, or in a relation filter.
+
+```ts
+await db.user.findMany({ where: { active: true, AND: [sql`LOWER(${tables.user.email}) = LOWER(${email})`] } });
+await db.user.findMany({ where: { posts: { some: sql`LENGTH(${tables.post.title}) > ${50}` } } });
+```
+
+Columns of the queried table (or of the related table inside a relation filter) are mapped to
+the query's alias; other tables' columns are rejected. Values are always bound parameters. Use
+`sql.identifier("NAME")` for an identifier that is not a model column, and `sql.raw(text)`
+only for trusted text.
+
 ### Migrations
 
 ```sh

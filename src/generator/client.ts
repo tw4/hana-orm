@@ -110,12 +110,15 @@ function modelTypes(contract: Contract, m: ModelDef): string {
 
   // where
   L.push(`export type ${M}WhereInput = {`);
-  L.push(`  AND?: ${M}WhereInput | ${M}WhereInput[];`, `  OR?: ${M}WhereInput[];`, `  NOT?: ${M}WhereInput | ${M}WhereInput[];`);
+  // an sql`...` fragment can stand for a condition (issue #31)
+  const W = `${M}WhereInput | $r.SQL<unknown>`;
+  L.push(`  AND?: ${W} | (${W})[];`, `  OR?: (${W})[];`, `  NOT?: ${W} | (${W})[];`);
   for (const f of cols) L.push(`  ${f.name}?: ${filterType(contract, f)};`);
   for (const r of rels) {
     const T = r.model;
-    if (r.list) L.push(`  ${r.name}?: { some?: ${T}WhereInput; every?: ${T}WhereInput; none?: ${T}WhereInput };`);
-    else L.push(`  ${r.name}?: ${T}WhereInput | null | { is?: ${T}WhereInput | null; isNot?: ${T}WhereInput | null };`);
+    const TW = `${T}WhereInput | $r.SQL<unknown>`;
+    if (r.list) L.push(`  ${r.name}?: { some?: ${TW}; every?: ${TW}; none?: ${TW} };`);
+    else L.push(`  ${r.name}?: ${TW} | null | { is?: ${TW} | null; isNot?: ${TW} | null };`);
   }
   L.push("};", "");
 
@@ -169,17 +172,17 @@ function modelTypes(contract: Contract, m: ModelDef): string {
 
   // args
   L.push(`export type ${M}FindManyArgs = {`);
-  L.push(`  where?: ${M}WhereInput;`, `  select?: ${M}Select | null;`, `  include?: ${M}Include | null;`, `  omit?: ${M}Omit | null;`);
+  L.push(`  where?: ${M}WhereInput | $r.SQL<unknown>;`, `  select?: ${M}Select | null;`, `  include?: ${M}Include | null;`, `  omit?: ${M}Omit | null;`);
   L.push(`  orderBy?: ${M}OrderByInput | ${M}OrderByInput[];`, `  cursor?: ${M}WhereUniqueInput;`, `  take?: number;`, `  skip?: number;`);
   L.push(`  /** One row per distinct combination of these fields (the first one in \`orderBy\` order). */`);
   L.push(`  distinct?: ${M}ScalarField | ${M}ScalarField[];`);
   L.push("};");
   L.push(`export type ${M}FindUniqueArgs = { where: ${M}WhereUniqueInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null };`);
-  L.push(`export type ${M}CountArgs = { where?: ${M}WhereInput; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number; select?: { _all?: boolean } & { [K in keyof ${M}]?: boolean } };`);
+  L.push(`export type ${M}CountArgs = { where?: ${M}WhereInput | $r.SQL<unknown>; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number; select?: { _all?: boolean } & { [K in keyof ${M}]?: boolean } };`);
   const numeric = cols.filter(isNumeric).map((f) => `${f.name}?: true`).join("; ");
   const all = cols.map((f) => `${f.name}?: true`).join("; ");
   L.push(`export type ${M}AggregateArgs = {`);
-  L.push(`  where?: ${M}WhereInput; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number;`);
+  L.push(`  where?: ${M}WhereInput | $r.SQL<unknown>; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number;`);
   L.push(`  _count?: true | { _all?: true; ${all} }; _sum?: { ${numeric} }; _avg?: { ${numeric} }; _min?: { ${all} }; _max?: { ${all} };`);
   L.push("};");
   L.push(`export type ${M}ScalarField = ${cols.map((f) => `"${f.name}"`).join(" | ") || "never"};`);
@@ -281,8 +284,8 @@ function modelTypes(contract: Contract, m: ModelDef): string {
     L.push(`  create<A extends $r.ArgsWithComputed<{ data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
     L.push(`  createMany(args: { data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean }): Promise<$r.BatchPayload>;`);
     L.push(`  createManyAndReturn<A extends $r.ArgsWithComputed<{ data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>[]>;`);
-    L.push(`  updateMany(args: { where?: ${M}WhereInput; data: ${M}UpdateManyInput }): Promise<$r.BatchPayload>;`);
-    L.push(`  deleteMany(args?: { where?: ${M}WhereInput }): Promise<$r.BatchPayload>;`);
+    L.push(`  updateMany(args: { where?: ${M}WhereInput | $r.SQL<unknown>; data: ${M}UpdateManyInput }): Promise<$r.BatchPayload>;`);
+    L.push(`  deleteMany(args?: { where?: ${M}WhereInput | $r.SQL<unknown> }): Promise<$r.BatchPayload>;`);
     if (!readOnly) {
       const sel = `select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null`;
       L.push(`  update<A extends $r.ArgsWithComputed<{ where: ${M}WhereUniqueInput; data: ${M}UpdateInput; ${sel} }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
