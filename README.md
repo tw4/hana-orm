@@ -255,6 +255,29 @@ await db.insert(user).values([{ email: "a@example.com" }]); // same defaults as 
   driver, codecs and transactions of the client (`tx.select()` inside `$transaction`).
 - HANA has no `RETURNING`, so `insert`/`update`/`delete` resolve with the affected row count.
 
+#### Prepared queries
+
+```ts
+import { placeholder } from "hana-orm/runtime";
+
+const byRole = db.user.findMany({ where: { role: placeholder("role") }, take: 20 }).prepare();
+await byRole.execute({ role: "ADMIN" });
+
+const recent = db.select({ id: post.id }).from(post).where(gt(post.id, placeholder("after"))).prepare();
+await recent.execute({ after: 1000 });
+```
+
+- The SQL is compiled once; each `execute` only fills the placeholders, encoded like the
+  column they stand for (`node bench/prepared.ts`: about 5–9× less client time per query).
+  The SQL text never changes, so with `statementCacheSize` HANA's prepared statement is
+  reused as well.
+- Object API: `findMany`, `findFirst(OrThrow)` and `findUnique(OrThrow)`; builders: `select`,
+  `update`, `delete`. With `include`, nested reads get the values and run as usual.
+- A placeholder value cannot be `null` (a bound NULL never compares equal; use `equals: null`
+  or `isNull()`); missing and unknown names are errors. Query extensions are not applied to
+  prepared queries, and a placeholder outside a prepared query is rejected before it reaches
+  the database.
+
 ### Migrations
 
 ```sh

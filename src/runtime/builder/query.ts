@@ -8,6 +8,7 @@ import { quoteIdent, tableRef } from "../sql.ts";
 import type { Simplify } from "../types.ts";
 import { Column, Param, SQL, TABLE, decodeColumn, isTable, type InsertOf, type Renderable, type RenderContext, type RowOf, type SourceMeta } from "./core.ts";
 import type { SubqueryLike } from "./ops.ts";
+import { fillParams, Prepared, slotNames } from "../prepared.ts";
 
 /** What a builder needs from the client that runs it. */
 export interface BuilderHost {
@@ -103,6 +104,16 @@ abstract class Runnable<R> implements PromiseLike<R> {
     const ctx: RenderContext = { contract: this.host.contract, defaultSchema: this.host.defaultSchema, params: [] };
     const text = this.render(ctx);
     return { sql: text, params: ctx.params };
+  }
+
+  /**
+   * Compiles the statement once; `execute({ name: value })` runs it with the values of its
+   * `placeholder("name")`s.
+   */
+  prepare(): Prepared<R> {
+    const { sql, params } = this.toSQL();
+    const contract = this.host.contract;
+    return new Prepared<R>((w, fn) => this.host.run(w, fn), this.write, sql, slotNames(params), (values, q) => this.run(q, sql, fillParams(contract, params, values)));
   }
 
   /** Runs the statement (also on `await`). */

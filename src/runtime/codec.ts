@@ -1,5 +1,6 @@
 import type { ColumnFieldDef, Contract } from "../schema/contract.ts";
 import { ValidationError } from "./errors.ts";
+import { Placeholder, PlaceholderSlot } from "./placeholder.ts";
 
 /**
  * Converts between JavaScript values and what `@sap/hana-client` expects/returns.
@@ -49,6 +50,8 @@ function describe(v: unknown): string {
 
 /** JS value → driver parameter. `null`/`undefined` → null. */
 export function encodeValue(contract: Contract, field: ColumnFieldDef, value: unknown): unknown {
+  // prepared queries: the value comes later and is encoded like this field
+  if (value instanceof Placeholder) return new PlaceholderSlot(value.name, field);
   if (value === null || value === undefined) return null;
   if (field.kind === "enum") {
     const e = contract.enums[field.type]!;

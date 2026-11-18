@@ -51,11 +51,13 @@ function filterType(contract: Contract, f: ColumnFieldDef): string {
   const t = inputType(contract, f);
   const n = f.optional;
   if (f.kind === "scalar") {
-    if (f.type === "String") return n ? `string | null | $r.StringNullableFilter` : `string | $r.StringFilter`;
-    if (f.type === "Boolean") return n ? `boolean | null | $r.BoolNullableFilter` : `boolean | $r.BoolFilter`;
+    if (f.type === "String") return n ? `string | $r.Placeholder | null | $r.StringNullableFilter` : `string | $r.Placeholder | $r.StringFilter`;
+    if (f.type === "Boolean") return n ? `boolean | $r.Placeholder | null | $r.BoolNullableFilter` : `boolean | $r.Placeholder | $r.BoolFilter`;
     if (f.type === "Json") return `$r.JsonFilter`;
   }
-  return n ? `${t} | null | $r.NullableFilter<${t}>` : `${t} | $r.Filter<${t}>`;
+  // placeholder("x") may stand for a value in prepared queries
+  const tp = `${t} | $r.Placeholder`;
+  return n ? `${tp} | null | $r.NullableFilter<${tp}>` : `${tp} | $r.Filter<${tp}>`;
 }
 
 function doc(text: string | undefined, indent = ""): string {
@@ -116,8 +118,8 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   if (combos.length) {
     const alts = combos.map((c) =>
       c.fields.length === 1
-        ? `{ ${c.fields[0]}: ${inputType(contract, m.fields.find((x) => x.name === c.fields[0]) as ColumnFieldDef)} }`
-        : `{ ${c.key}: { ${c.fields.map((n) => `${n}: ${inputType(contract, m.fields.find((x) => x.name === n) as ColumnFieldDef)}`).join("; ")} } }`,
+        ? `{ ${c.fields[0]}: ${inputType(contract, m.fields.find((x) => x.name === c.fields[0]) as ColumnFieldDef)} | $r.Placeholder }`
+        : `{ ${c.key}: { ${c.fields.map((n) => `${n}: ${inputType(contract, m.fields.find((x) => x.name === n) as ColumnFieldDef)} | $r.Placeholder`).join("; ")} } }`,
     );
     L.push(`export type ${M}WhereUniqueInput = ${M}WhereInput & (${alts.join(" | ")});`, "");
   } else {
@@ -261,11 +263,11 @@ function modelTypes(contract: Contract, m: ModelDef): string {
 
   // delegate
   L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate<G = {}> {`);
-  L.push(`  findMany<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>[]>;`);
-  L.push(`  findFirst<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G> | null>;`);
-  L.push(`  findFirstOrThrow<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>>;`);
-  L.push(`  findUnique<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G> | null>;`);
-  L.push(`  findUniqueOrThrow<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G>>;`);
+  L.push(`  findMany<A extends ${M}FindManyArgs = {}>(args?: A): $r.PreparableQuery<${M}GetPayload<A, G>[]>;`);
+  L.push(`  findFirst<A extends ${M}FindManyArgs = {}>(args?: A): $r.PreparableQuery<${M}GetPayload<A, G> | null>;`);
+  L.push(`  findFirstOrThrow<A extends ${M}FindManyArgs = {}>(args?: A): $r.PreparableQuery<${M}GetPayload<A, G>>;`);
+  L.push(`  findUnique<A extends ${M}FindUniqueArgs>(args: A): $r.PreparableQuery<${M}GetPayload<A, G> | null>;`);
+  L.push(`  findUniqueOrThrow<A extends ${M}FindUniqueArgs>(args: A): $r.PreparableQuery<${M}GetPayload<A, G>>;`);
   L.push(`  count<A extends ${M}CountArgs = {}>(args?: A): Promise<A extends { select: infer S } ? { [K in $r.SelectedKeys<S>]: number } : number>;`);
   L.push(`  aggregate<A extends ${M}AggregateArgs>(args: A): Promise<$r.AggregatePayload<${M}, A>>;`);
   L.push(`  groupBy<A extends ${M}GroupByArgs>(args: A): Promise<$r.GroupByPayload<${M}, A>[]>;`);
