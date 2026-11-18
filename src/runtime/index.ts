@@ -4,6 +4,8 @@ export type { Driver, IsolationLevel, Queryable, QueryEvent, TransactionOptions 
 export { DatabaseError, HanaOrmError, NotFoundError, QueryTimeoutError, TransactionError, ValidationError, type TransactionErrorCode } from "./errors.ts";
 export { resolveConnectionConfig, parseHanaUrl } from "./config.ts";
 export type { Contract } from "../schema/contract.ts";
+export { DURATION_BUCKETS_MS } from "./events.ts";
+export type { ClientEventName, ClientEvents, ClientMetrics, LogEvent, PoolStats, QueryLogEvent } from "./events.ts";
 export type { DecimalConstructor, DecimalMode } from "./codec.ts";
 export type { GeneratedConfig } from "./client.ts";
 export type * from "./types.ts";

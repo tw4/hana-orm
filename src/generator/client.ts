@@ -332,6 +332,10 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   out.push(`export interface ${C}<G = {}> extends ${C}Transaction<G> {`);
   out.push(`  $connect(): Promise<void>;`);
   out.push(`  $disconnect(): Promise<void>;`);
+  out.push(`  /** Subscribes to \`query\`, \`info\`, \`warn\` or \`error\` events; returns a function that unsubscribes. */`);
+  out.push(`  $on<E extends $r.ClientEventName>(event: E, handler: (event: $r.ClientEvents[E]) => void): () => void;`);
+  out.push(`  /** Query and transaction counters and the connection pool's state. */`);
+  out.push(`  $metrics(): $r.ClientMetrics;`);
   out.push(`  $transaction<R>(fn: (tx: ${C}Transaction<G>) => Promise<R>, options?: $r.TransactionOptions): Promise<R>;`);
   out.push(`  /** Runs the queries in order in one transaction. Pass them without awaiting them. */`);
   out.push(`  $transaction<const P extends readonly Promise<unknown>[]>(queries: P, options?: $r.TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;`);

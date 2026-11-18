@@ -7,8 +7,13 @@ import type { Driver, IsolationLevel, QueryEvent, Queryable } from "./driver.ts"
 import { Engine } from "./engine.ts";
 import { NotFoundError, TransactionError, ValidationError } from "./errors.ts";
 import { HanaDriver, type ConnectionConfig } from "./hana-driver.ts";
+import { InstrumentedDriver, Observer, type ClientEventName, type ClientEvents, type ClientMetrics, type StatsDriver } from "./events.ts";
 
-export type LogOption = boolean | "query" | ((event: QueryEvent) => void);
+/**
+ * `true` / `"query"` prints every statement with its duration; a list of levels prints those
+ * events (`["query", "warn", "error"]`); a function receives each statement (`QueryEvent`).
+ */
+export type LogOption = boolean | "query" | readonly ClientEventName[] | ((event: QueryEvent) => void);
 
 /** Options of `$transaction`; client-wide defaults go into `ClientOptions.transactionOptions`. */
 export interface TransactionOptions {
@@ -133,6 +138,10 @@ export interface ClientOptions {
   idleCheckAfter?: number;
   /** `true`/"query" prints each SQL statement with its duration; a function receives the events. */
   log?: LogOption;
+  /** Include bound parameter values in query events and logs (default false: values may be personal data). */
+  logParams?: boolean;
+  /** Statements that run at least this many ms also emit a `warn` event. */
+  slowQueryThreshold?: number;
   /** Fields left out of every result unless a query asks for them: `{ user: { passwordHash: true } }`. */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
   /** Defaults for every `$transaction` (`timeout`, `maxWait`, `isolationLevel`). */
@@ -193,6 +202,7 @@ export interface GeneratedConfig {
 interface Shared {
   contract: Contract;
   options: ClientOptions;
+  observer: Observer;
   config: GeneratedConfig;
   engine: Engine | undefined;
   driver: Driver | undefined;
@@ -205,7 +215,12 @@ export class BaseClient {
   /** @internal */ _extensions: ExtensionArgs[];
 
   constructor(contract: Contract, options: ClientOptions = {}, config: GeneratedConfig = {}) {
-    this._shared = { contract: clientContract(contract), options, config, engine: undefined, driver: options.driver };
+    const observer = new Observer({
+      ...(options.logParams !== undefined ? { logParams: options.logParams } : {}),
+      ...(options.slowQueryThreshold !== undefined ? { slowQueryThreshold: options.slowQueryThreshold } : {}),
+    });
+    installLogger(observer, options.log);
+    this._shared = { contract: clientContract(contract), options, config, observer, engine: undefined, driver: options.driver ? new InstrumentedDriver(options.driver, observer) : undefined };
     this._tx = undefined;
     this._extensions = [];
     this._install();
@@ -229,13 +244,15 @@ export class BaseClient {
     if (!s.driver) {
       const config = resolveConnectionConfig(s.contract.datasource, s.options.datasource);
       const o = s.options;
-      s.driver = new HanaDriver(config, {
-        onQuery: makeLogger(o.log),
-        ...(o.poolSize !== undefined ? { poolSize: o.poolSize } : {}),
-        ...(o.statementTimeout !== undefined ? { statementTimeout: o.statementTimeout } : {}),
-        ...(o.idleTimeout !== undefined ? { idleTimeout: o.idleTimeout } : {}),
-        ...(o.idleCheckAfter !== undefined ? { idleCheckAfter: o.idleCheckAfter } : {}),
-      });
+      s.driver = new InstrumentedDriver(
+        new HanaDriver(config, {
+          ...(o.poolSize !== undefined ? { poolSize: o.poolSize } : {}),
+          ...(o.statementTimeout !== undefined ? { statementTimeout: o.statementTimeout } : {}),
+          ...(o.idleTimeout !== undefined ? { idleTimeout: o.idleTimeout } : {}),
+          ...(o.idleCheckAfter !== undefined ? { idleCheckAfter: o.idleCheckAfter } : {}),
+        }),
+        s.observer,
+      );
     }
     return s.driver;
   }
@@ -282,8 +299,18 @@ export class BaseClient {
     return delegate;
   }
 
-  /** @internal */
+  /** @internal Runs one model operation; a failure is reported as an `error` event. */
   async _execute(model: ModelDef, op: Operation, args: any): Promise<any> {
+    try {
+      return await this._executeOp(model, op, args);
+    } catch (err) {
+      this._shared.observer.log("error", err instanceof Error ? err.message : String(err), `${model.name}.${op}`);
+      throw err;
+    }
+  }
+
+  /** @internal */
+  async _executeOp(model: ModelDef, op: Operation, args: any): Promise<any> {
     const e = this._engine();
     switch (op) {
       case "findMany":
@@ -328,12 +355,32 @@ export class BaseClient {
   /** Opens a connection eagerly (otherwise the first query connects). */
   async $connect(): Promise<void> {
     await this._driver().query(`SELECT 1 AS "ok" FROM DUMMY`);
+    this._shared.observer.log("info", "Connected", "client");
   }
 
   /** Closes all pooled connections. */
   async $disconnect(): Promise<void> {
-    await this._shared.driver?.close();
+    const driver = this._shared.driver;
+    if (!driver) return;
+    await driver.close();
     this._shared.driver = undefined;
+    this._shared.observer.log("info", "Disconnected; the connection pool is closed", "client");
+  }
+
+  /**
+   * Subscribes to client events: `query` (every statement, with its duration), `info`, `warn`
+   * (e.g. slow queries) and `error` (failed operations). Returns a function that unsubscribes.
+   * Parameter values are left out unless the client was created with `logParams: true`.
+   */
+  $on<E extends ClientEventName>(event: E, handler: (event: ClientEvents[E]) => void): () => void {
+    return this._shared.observer.on(event, handler);
+  }
+
+  /** Counters since the client was created, plus the connection pool's current state. */
+  $metrics(): ClientMetrics {
+    const d = this._shared.driver as StatsDriver | undefined;
+    const inner = d instanceof InstrumentedDriver ? d.inner : d;
+    return this._shared.observer.metrics(inner?.stats ? inner.stats() : null);
   }
 
   /**
@@ -392,11 +439,11 @@ export class BaseClient {
       },
       { ...(opts.isolationLevel ? { isolationLevel: opts.isolationLevel } : {}), ...(Number.isFinite(maxWait) ? { maxWait } : {}) },
     );
-    if (!limited) return run;
+    if (!limited) return this._report("transaction", run);
     // Reject at the timeout without waiting for a running statement; the rollback follows.
     run.catch(() => {});
     timedOut.catch(() => {});
-    return Promise.race([run, timedOut]);
+    return this._report("transaction", Promise.race([run, timedOut]));
   }
 
   /** Raw SELECT as a tagged template; values are bound as parameters. Rows are returned as the driver gives them. */
@@ -411,12 +458,20 @@ export class BaseClient {
 
   /** Raw SELECT with `?` placeholders. Never build `sql` from user input. */
   $queryRawUnsafe<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]> {
-    return new QueryPromise((client) => (client ? client.$queryRawUnsafe<T>(sql, ...params) : this._run(false, (q) => q.query<T>(sql, params.map(rawParam)))));
+    return new QueryPromise((client) => (client ? client.$queryRawUnsafe<T>(sql, ...params) : this._report("$queryRaw", this._run(false, (q) => q.query<T>(sql, params.map(rawParam))))));
   }
 
   /** Raw DML/DDL with `?` placeholders. Never build `sql` from user input. */
   $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number> {
-    return new QueryPromise((client) => (client ? client.$executeRawUnsafe(sql, ...params) : this._run(false, (q) => q.execute(sql, params.map(rawParam)))));
+    return new QueryPromise((client) => (client ? client.$executeRawUnsafe(sql, ...params) : this._report("$executeRaw", this._run(false, (q) => q.execute(sql, params.map(rawParam))))));
+  }
+
+  /** @internal Reports a failure of `p` as an `error` event. */
+  _report<T>(target: string, p: Promise<T>): Promise<T> {
+    return p.catch((err: unknown) => {
+      this._shared.observer.log("error", err instanceof Error ? err.message : String(err), target);
+      throw err;
+    });
   }
 
   /** Returns a new client with the extension applied; the original is unchanged. */
@@ -431,10 +486,24 @@ function rawParam(v: unknown): unknown {
   return v;
 }
 
-function makeLogger(log: LogOption | undefined): ((e: QueryEvent) => void) | undefined {
-  if (!log) return undefined;
-  if (typeof log === "function") return log;
-  return (e) => console.log(`hana-orm:query ${e.sql} (${e.durationMs.toFixed(1)} ms)`);
+/** Subscribes the `log` client option to the observer. */
+function installLogger(observer: Observer, log: LogOption | undefined): void {
+  if (!log) return;
+  if (typeof log === "function") {
+    observer.on("query", (e) => log({ sql: e.sql, params: e.params, durationMs: e.durationMs }));
+    return;
+  }
+  const levels: readonly ClientEventName[] = Array.isArray(log) ? log : ["query"];
+  for (const level of levels) {
+    if (level === "query") {
+      observer.on("query", (e) =>
+        console.log(`hana-orm:query ${e.sql} (${e.durationMs.toFixed(1)} ms)${e.params.length ? ` ${JSON.stringify(e.params, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}` : ""}${e.error ? ` failed: ${e.error}` : ""}`),
+      );
+    } else {
+      const out = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+      observer.on(level, (e) => out(`hana-orm:${level} [${e.target}] ${e.message}`));
+    }
+  }
 }
 
 /** Used by generated code: `export const HanaClient = createClientClass(contract)`. */
