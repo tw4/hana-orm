@@ -142,9 +142,31 @@ Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `ag
 (`equals`, `not`, `in`, `notIn`, `lt/lte/gt/gte`, `contains/startsWith/endsWith`, `mode: "insensitive"`,
 `AND/OR/NOT`, relation filters `some/every/none/is/isNot`); nested writes (`create`, `createMany`,
 `connect`, `connectOrCreate`, `disconnect`, `set`, `update`, `updateMany`, `upsert`, `delete`,
-`deleteMany`); cursor pagination; `_count`; `$extends` (model methods and query hooks).
+`deleteMany`); cursor pagination; `_count`; `$extends` (model methods, query hooks and computed fields).
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
+
+#### Computed fields
+
+```ts
+const db = new HanaClient().$extends({
+  result: {
+    user: {
+      fullName: { needs: { firstName: true, lastName: true }, compute: (u) => `${u.firstName} ${u.lastName}` },
+    },
+  },
+});
+
+const users = await db.user.findMany({ select: { id: true, fullName: true } }); // { id: number; fullName: string }[]
+```
+
+- `needs` lists the fields `compute` reads; they are fetched even when `select` or `omit`
+  (also the client-wide `omit`) leave them out, and are removed from the result again.
+- Without `select` every computed field is added; `select: { fullName: true }` picks it and
+  `omit: { fullName: true }` leaves it out. Types follow.
+- They apply to the rows a query returns (finds, `create`, `update`, `upsert`, `delete`,
+  `createManyAndReturn`), not to related rows loaded with `include`.
+- A later `$extends` can add fields or replace one with the same name.
 
 #### Many-to-many relations
 

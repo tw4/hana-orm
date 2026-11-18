@@ -260,26 +260,27 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   }
 
   // delegate
-  L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate<G = {}> {`);
-  L.push(`  findMany<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>[]>;`);
-  L.push(`  findFirst<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G> | null>;`);
-  L.push(`  findFirstOrThrow<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>>;`);
-  L.push(`  findUnique<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G> | null>;`);
-  L.push(`  findUniqueOrThrow<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G>>;`);
+  L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate<G = {}, R = {}> {`);
+  L.push(`  /** @internal Types of computed fields from \`$extends({ result })\` (type-only). */`, `  readonly $computed?: R;`);
+  L.push(`  findMany<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>[]>;`);
+  L.push(`  findFirst<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A> | null>;`);
+  L.push(`  findFirstOrThrow<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
+  L.push(`  findUnique<A extends $r.ArgsWithComputed<${M}FindUniqueArgs, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A> | null>;`);
+  L.push(`  findUniqueOrThrow<A extends $r.ArgsWithComputed<${M}FindUniqueArgs, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
   L.push(`  count<A extends ${M}CountArgs = {}>(args?: A): Promise<A extends { select: infer S } ? { [K in $r.SelectedKeys<S>]: number } : number>;`);
   L.push(`  aggregate<A extends ${M}AggregateArgs>(args: A): Promise<$r.AggregatePayload<${M}, A>>;`);
   L.push(`  groupBy<A extends ${M}GroupByArgs>(args: A): Promise<$r.GroupByPayload<${M}, A>[]>;`);
   if (m.kind !== "view") {
-    L.push(`  create<A extends { data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }>(args: A): Promise<${M}GetPayload<A, G>>;`);
+    L.push(`  create<A extends $r.ArgsWithComputed<{ data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
     L.push(`  createMany(args: { data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean }): Promise<$r.BatchPayload>;`);
-    L.push(`  createManyAndReturn<A extends { data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }>(args: A): Promise<${M}GetPayload<A, G>[]>;`);
+    L.push(`  createManyAndReturn<A extends $r.ArgsWithComputed<{ data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>[]>;`);
     L.push(`  updateMany(args: { where?: ${M}WhereInput; data: ${M}UpdateManyInput }): Promise<$r.BatchPayload>;`);
     L.push(`  deleteMany(args?: { where?: ${M}WhereInput }): Promise<$r.BatchPayload>;`);
     if (!readOnly) {
       const sel = `select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null`;
-      L.push(`  update<A extends { where: ${M}WhereUniqueInput; data: ${M}UpdateInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
-      L.push(`  upsert<A extends { where: ${M}WhereUniqueInput; create: ${M}CreateInput; update: ${M}UpdateInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
-      L.push(`  delete<A extends { where: ${M}WhereUniqueInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
+      L.push(`  update<A extends $r.ArgsWithComputed<{ where: ${M}WhereUniqueInput; data: ${M}UpdateInput; ${sel} }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
+      L.push(`  upsert<A extends $r.ArgsWithComputed<{ where: ${M}WhereUniqueInput; create: ${M}CreateInput; update: ${M}UpdateInput; ${sel} }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
+      L.push(`  delete<A extends $r.ArgsWithComputed<{ where: ${M}WhereUniqueInput; ${sel} }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
     }
   }
   L.push("}", "");
@@ -322,13 +323,17 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   out.push(`  $transaction<R>(fn: (tx: ${C}Transaction<G>) => Promise<R>, options?: $r.TransactionOptions): Promise<R>;`);
   out.push(`  /** Runs the queries in order in one transaction. Pass them without awaiting them. */`);
   out.push(`  $transaction<const P extends readonly Promise<unknown>[]>(queries: P, options?: $r.TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;`);
-  out.push(`  $extends<E extends $r.ExtensionArgs>(extension: E): Extended<${C}<G>, E, G>;`);
+  out.push(`  $extends<E extends $r.ExtensionArgs & { result?: ${C}ResultArgs }>(extension: E): Extended<${C}<G>, E, G>;`);
   out.push("}", "");
+  out.push(`/** \`result\` extension shape: \`compute\` receives the model row. */`);
+  out.push(`export type ${C}ResultArgs = { ${models.map((m) => `${lowerFirst(m.name)}?: Record<string, { needs?: { [F in keyof ${m.name}]?: boolean }; compute: (row: ${m.name}) => unknown }>`).join("; ")} };`);
   out.push(`type ModelMethods<E, K extends string> = E extends { model: infer MM } ? (MM extends Record<string, unknown> ? (K extends keyof MM ? MM[K] : {}) & ("$allModels" extends keyof MM ? MM["$allModels"] : {}) : {}) : {};`);
   out.push(`type ClientMethods<E> = E extends { client: infer CM } ? CM : {};`);
   out.push(
-    `export type Extended<C, E, G = {}> = Omit<C, ${models.map((m) => `"${lowerFirst(m.name)}"`).join(" | ") || "never"}> & ClientMethods<E> & {\n${models
-      .map((m) => `  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G> & ModelMethods<E, "${lowerFirst(m.name)}">;`)
+    `export type Extended<C, E, G = {}> = Omit<C, ${[...models.map((m) => `"${lowerFirst(m.name)}"`), `"$extends"`].join(" | ")}> & ClientMethods<E> & {\n` +
+      `  /** Extends again; computed fields of earlier extensions are kept. */\n` +
+      `  $extends<E2 extends $r.ExtensionArgs & { result?: ${C}ResultArgs }>(extension: E2): Extended<Extended<C, E, G>, E2, G>;\n${models
+      .map((m) => `  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G, $r.Simplify<$r.PrevComputed<C, "${lowerFirst(m.name)}"> & $r.ComputedOf<E, "${lowerFirst(m.name)}">>> & ModelMethods<E, "${lowerFirst(m.name)}">;`)
       .join("\n")}\n};`,
     "",
   );
