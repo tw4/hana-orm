@@ -357,6 +357,29 @@ model Tag {
   `upsert`, `delete`, `deleteMany` work through the join table. `connect` of a row that is already
   linked does nothing. There is no nested `createMany`.
 
+#### Typed raw SQL
+
+Put one statement per file in `sql/` next to the schema and run `hana-orm generate --sql`
+(it needs a connection: HANA prepares each statement without running it and reports its
+columns and parameters):
+
+```sql
+-- sql/get-active-users.sql
+SELECT "ID", "NAME", "CREATED_AT" FROM "USERS" WHERE "ACTIVE" = TRUE AND "AGE" >= :minAge
+```
+
+```ts
+import { getActiveUsers } from "./generated/hana/sql.ts";
+
+const users = await db.$queryRawTyped(getActiveUsers(18));
+// { ID: number; NAME: string | null; CREATED_AT: Date }[]
+```
+
+- Parameters are `:name` (one argument per name, even when used twice) or `?` (`p1`, `p2`, …).
+- Rows are decoded by the reported column types (BIGINT → `bigint`, DECIMAL → string,
+  dates → `Date`), and nullable columns are typed `| null`. Give computed columns aliases.
+- The functions go to `<output>/sql.ts` of each generator; `--sql <dir>` reads another folder.
+
 #### Bulk inserts
 
 ```ts

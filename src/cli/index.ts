@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, realpathSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, watch, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -8,6 +8,7 @@ import { formatSchema } from "../schema/format.ts";
 import type { Contract } from "../schema/contract.ts";
 import { SchemaError } from "../schema/errors.ts";
 import { generateClient } from "../generator/client.ts";
+import { generateTypedSqlModule, parseSqlFile, type DescribingDriver } from "../generator/typed-sql.ts";
 import { DECIMAL_MODES, type DecimalMode } from "../runtime/codec.ts";
 import { loadDotEnv, resolveConnectionConfig, resolveDefaultSchema } from "../runtime/config.ts";
 import { HanaDriver } from "../runtime/hana-driver.ts";
@@ -22,7 +23,10 @@ Usage: hana-orm <command> [options]
 
 Commands
   init                 Create schema.hana and .env.example in the current folder
-  generate [--watch]   Generate the typed client from the schema
+  generate [--watch] [--sql [dir]]
+                       Generate the typed client from the schema. --sql also turns every
+                       <schema dir>/sql/*.sql (or dir/*.sql) into typed query functions in
+                       <output>/sql.ts; HANA describes each statement without running it.
   validate             Check the schema for errors
   format [--check]     Format the schema file(s) in place: aligned columns, attribute order,
                        spacing. --check only lists files that are not formatted (exit 1).
@@ -169,7 +173,7 @@ Next steps:
   return 0;
 }
 
-async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<number> {
+export async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<number> {
   const once = async (): Promise<boolean> => {
     let contract: Contract;
     try {
@@ -199,6 +203,7 @@ async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<number> {
       writeFileSync(file, source);
       ctx.log(`Generated client for ${Object.keys(contract.models).length} model(s) → ${relative(ctx.cwd, file)}`);
     }
+    if (args.flags.sql !== undefined) return generateSql(ctx, args, generators.map((g) => ({ outDir: resolve(schemaDir(ctx.schemaPath), String(g.output ?? "./generated/hana")), runtimeImport: typeof g.runtimeImport === "string" ? g.runtimeImport : undefined })));
     return true;
   };
   const ok = await once();
@@ -210,6 +215,45 @@ async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<number> {
     timer = setTimeout(() => void once(), 100);
   });
   return new Promise(() => {});
+}
+
+/** `generate --sql`: describes `sql/*.sql` on the database and writes `<output>/sql.ts`. */
+async function generateSql(ctx: CliContext, args: ParsedArgs, targets: { outDir: string; runtimeImport: string | undefined }[]): Promise<boolean> {
+  const dir = typeof args.flags.sql === "string" ? resolve(ctx.cwd, args.flags.sql) : join(schemaDir(ctx.schemaPath), "sql");
+  if (!existsSync(dir)) {
+    console.error(`No SQL folder at ${relative(ctx.cwd, dir) || dir}; put one statement per .sql file there or pass --sql <dir>.`);
+    return false;
+  }
+  const files = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".sql")).sort();
+  if (!files.length) {
+    ctx.log(`No .sql files in ${relative(ctx.cwd, dir)}.`);
+    return true;
+  }
+  const db = await ctx.connect();
+  try {
+    if (typeof (db as Partial<DescribingDriver>).describe !== "function") throw new Error("The configured driver cannot describe statements");
+    const entries = [];
+    for (const f of files) {
+      const file = parseSqlFile(f, readFileSync(join(dir, f), "utf8"));
+      try {
+        entries.push({ file, description: await (db as unknown as DescribingDriver).describe(file.sql) });
+      } catch (e) {
+        throw new Error(`${f}: ${(e as Error).message}`);
+      }
+    }
+    for (const t of targets) {
+      const out = join(t.outDir, "sql.ts");
+      mkdirSync(t.outDir, { recursive: true });
+      writeFileSync(out, generateTypedSqlModule(entries, t.runtimeImport));
+      ctx.log(`Generated ${entries.length} typed SQL function(s) → ${relative(ctx.cwd, out)}`);
+    }
+    return true;
+  } catch (e) {
+    console.error((e as Error).message);
+    return false;
+  } finally {
+    await db.close();
+  }
 }
 
 /** `hana-orm format [--check]`: formats every schema file; with --check it only reports. */
