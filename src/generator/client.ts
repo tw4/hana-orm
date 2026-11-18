@@ -375,6 +375,8 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   out.push(`  $transaction<R>(fn: (tx: ${C}Transaction<G>) => Promise<R>, options?: $r.TransactionOptions): Promise<R>;`);
   out.push(`  /** Runs the queries in order in one transaction. Pass them without awaiting them. */`);
   out.push(`  $transaction<const P extends readonly Promise<unknown>[]>(queries: P, options?: $r.TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;`);
+  out.push(`  /** Runs queries and builders in order on one connection in one transaction; identical builder updates/deletes go as one batch. */`);
+  out.push(`  $batch<const P extends readonly PromiseLike<unknown>[]>(items: P, options?: $r.TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;`);
   out.push(`  $extends<E extends $r.ExtensionArgs & { result?: ${C}ResultArgs }>(extension: E): Extended<${C}<G>, E, G>;`);
   out.push("}", "");
   out.push(`/** \`result\` extension shape: \`compute\` receives the model row. */`);

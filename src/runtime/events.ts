@@ -184,11 +184,14 @@ export class InstrumentedDriver implements StatsDriver {
   }
 
   #wrap(q: Queryable, inTx: boolean): Queryable {
-    return {
+    const w: Queryable = {
       query: <T>(sql: string, params: readonly unknown[] = []) => this.#time(q, inTx, sql, params, (x) => x.query<T>(sql, params)),
       execute: (sql: string, params: readonly unknown[] = []) => this.#time(q, inTx, sql, params, (x) => x.execute(sql, params)),
       executeBatch: (sql: string, rows: readonly (readonly unknown[])[]) => this.#time(q, inTx, sql, rows, (x) => x.executeBatch(sql, rows)),
     };
+    // keep per-row batch counts available to $batch
+    if (q.executeBatchCounts) w.executeBatchCounts = (sql, rows) => this.#time(q, inTx, sql, rows, (x) => x.executeBatchCounts!(sql, rows));
+    return w;
   }
 
   query<T>(sql: string, params?: readonly unknown[]): Promise<T[]> {

@@ -357,6 +357,23 @@ model Tag {
   `upsert`, `delete`, `deleteMany` work through the join table. `connect` of a row that is already
   linked does nothing. There is no nested `createMany`.
 
+#### Batches
+
+```ts
+const [count, recent, ...updated] = await db.$batch([
+  db.user.count(),
+  db.select({ id: post.id }).from(post).orderBy(desc(post.id)).limit(10),
+  ...changes.map((c) => db.update(post).set({ title: c.title }).where(eq(post.id, c.id))),
+]);
+// [number, { id: number }[], ...number[]]
+```
+
+`$batch` runs the items in order on one connection inside one transaction (a failure rolls
+everything back) and resolves with a typed tuple. Consecutive builder `update`s or `delete`s
+with the same SQL text, like the ones above, are sent as one batch: one round trip, with each
+item's affected row count (-1 if HANA does not report it). Pass the items without awaiting
+them.
+
 #### Typed raw SQL
 
 Put one statement per file in `sql/` next to the schema and run `hana-orm generate --sql`
@@ -461,6 +478,7 @@ await db.insert(user).values([{ email: "a@example.com" }]); // same defaults as 
 - `.toSQL()` returns the statement and parameters without running it. Builders share the
   driver, codecs and transactions of the client (`tx.select()` inside `$transaction`).
 - HANA has no `RETURNING`, so `insert`/`update`/`delete` resolve with the affected row count.
+
 
 #### Prepared queries
 
