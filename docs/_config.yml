@@ -1,0 +1,15 @@
+title: hana-orm
+description: A type-safe TypeScript ORM for SAP HANA
+url: https://tw4.github.io
+baseurl: /hana-orm
+remote_theme: just-the-docs/just-the-docs@v0.10.1
+plugins:
+  - jekyll-remote-theme
+search_enabled: true
+heading_anchors: true
+aux_links:
+  GitHub: https://github.com/tw4/hana-orm
+  npm: https://www.npmjs.com/package/hana-orm
+footer_content: "Apache License 2.0. SAP and SAP HANA are trademarks of SAP SE; hana-orm is not affiliated with SAP."
+exclude:
+  - README.md
