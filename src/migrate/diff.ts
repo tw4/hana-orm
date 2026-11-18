@@ -15,7 +15,9 @@ import {
   alterColumnSql,
   cmp,
   columnExistsCheck,
+  createFulltextIndexSql,
   createIndexSql,
+  dropFulltextIndexSql,
   createTableSql,
   dropColumnSql,
   dropConstraintSql,
@@ -53,6 +55,7 @@ const GROUPS = [
   "renameIndex",
   "dropForeignKey",
   "dropIndex",
+  "dropFulltextIndex",
   "dropUnique",
   "dropPrimaryKey",
   "dropTable",
@@ -63,6 +66,7 @@ const GROUPS = [
   "addPrimaryKey",
   "addUnique",
   "createIndex",
+  "createFulltextIndex",
   "addForeignKey",
 ] as const;
 
@@ -92,6 +96,7 @@ export function applyRenames(from: PhysicalSchema, renames: Renames): PhysicalSc
     if (t.primaryKey) t.primaryKey = { ...t.primaryKey, columns: t.primaryKey.columns.map(cm) };
     t.uniques = t.uniques.map((u) => ({ ...u, columns: u.columns.map(cm) }));
     t.indexes = t.indexes.map((i) => ({ ...i, columns: i.columns.map(cm) }));
+    if (t.fulltext) t.fulltext = t.fulltext.map((x) => ({ ...x, column: cm(x.column) }));
     t.foreignKeys = t.foreignKeys.map((fk) => {
       const refK = newKey(refKeyOf(fk));
       const ref = splitKey(refK);
@@ -222,6 +227,7 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
       key,
     );
     for (const i of t.indexes) add(createIndexOp(key, t, i.name, i.columns), key, i.name);
+    for (const x of t.fulltext ?? []) add(createFulltextOp(key, t, x.name, x.column), key, x.name);
     for (const fk of t.foreignKeys) add(addFkOp(key, t, fk), key, fk.name);
   }
 
@@ -344,6 +350,14 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
         x.name,
       );
     }
+
+    // full-text indexes: matched by name and column; a renamed or moved one is re-created
+    const ft = matchNamed(ta.fulltext ?? [], tb.fulltext ?? [], (x, y) => x.column === y.column);
+    const ftRenamed = ft.kept.filter(([x, y]) => x.name !== y.name && !isSystemName(x.name));
+    for (const x of [...ft.removed, ...ftRenamed.map(([x]) => x)]) {
+      add({ kind: "dropFulltextIndex", description: `Drop full-text index ${quoteIdent(x.name)} of ${physicalTableRef(tb)}`, sql: [dropFulltextIndexSql(tb.schema, x.name)], table: key }, key, x.name);
+    }
+    for (const y of [...ft.added, ...ftRenamed.map(([, y]) => y)]) add(createFulltextOp(key, tb, y.name, y.column), key, y.name);
 
     // foreign keys: changed, renamed, on a retyped column, or pointing at a key that is dropped
     const fks = matchNamed(ta.foreignKeys, tb.foreignKeys, sameForeignKey);
@@ -521,6 +535,15 @@ function addFkOp(key: string, t: { schema?: string; name: string }, fk: Physical
     kind: "addForeignKey",
     description: `Add foreign key ${quoteIdent(fk.name)} on ${physicalTableRef(t)} (${fk.columns.map(quoteIdent).join(", ")}) → ${physicalTableRef({ schema: fk.refSchema, name: fk.refTable })}`,
     sql: [addForeignKeySql(t, fk)],
+    table: key,
+  };
+}
+
+function createFulltextOp(key: string, t: { schema?: string; name: string }, name: string, column: string): MigrationOp {
+  return {
+    kind: "createFulltextIndex",
+    description: `Create full-text index ${quoteIdent(name)} on ${physicalTableRef(t)} (${quoteIdent(column)})`,
+    sql: [createFulltextIndexSql(t, name, column)],
     table: key,
   };
 }

@@ -131,6 +131,12 @@ export function scalarCondition(engine: Engine, field: ColumnFieldDef, col: stri
         parts.push(`${lhs} ${sym} ${rhs(v)}`);
         break;
       }
+      case "search": {
+        if (field.kind !== "scalar" || field.type !== "String") throw new ValidationError(`'search' needs a String field; '${field.name}' is not one`);
+        if (typeof v !== "string" || !v.trim()) throw new ValidationError(`'search' on field '${field.name}' expects a non-empty search string`);
+        parts.push(`CONTAINS(${col}, ${ctx.bind(v)})`);
+        break;
+      }
       case "contains":
       case "startsWith":
       case "endsWith": {

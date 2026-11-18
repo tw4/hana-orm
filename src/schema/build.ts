@@ -179,6 +179,23 @@ export function buildContract(ast: SchemaAst, options: BuildOptions = {}): Contr
           if (fields) model.indexes.push({ dbName: namedMap(a) ?? constraintName("IX", model.dbName, columnNames(model, fields)), fields });
           break;
         }
+        case "fulltext": {
+          const fields = fieldListArg(a, model, err);
+          if (!fields) break;
+          const map = namedMap(a);
+          if (map && fields.length > 1) err(`@@fulltext with map: takes one field; HANA creates one full-text index per column`, a.pos);
+          for (const name of fields) {
+            const f = model.fields.find((x) => x.name === name);
+            if (f && (f.kind !== "scalar" || f.type !== "String")) {
+              err(`@@fulltext field '${name}' of '${m.name}' must be a String field`, a.pos);
+              continue;
+            }
+            const list = (model.fulltext ??= []);
+            if (list.some((x) => x.field === name)) err(`Field '${name}' of '${m.name}' has more than one @@fulltext index`, a.pos);
+            else list.push({ dbName: map ?? constraintName("FTI", model.dbName, columnNames(model, [name])), field: name });
+          }
+          break;
+        }
         default:
           err(`Unknown block attribute '@@${a.name}'`, a.pos);
       }

@@ -17,6 +17,8 @@ export type OpKind =
   | "addUnique"
   | "createIndex"
   | "addForeignKey"
+  | "createFulltextIndex"
+  | "dropFulltextIndex"
   /** Hand-written SQL read from a file in the migration folder (`migrate plan --empty`). */
   | "sqlFile"
   /** A TypeScript/JavaScript data migration in the migration folder (`migrate plan --script`). */

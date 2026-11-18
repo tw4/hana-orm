@@ -86,6 +86,14 @@ export function createIndexSql(t: { schema?: string; name: string }, name: strin
   return `CREATE INDEX ${physicalTableRef({ schema: t.schema, name })} ON ${physicalTableRef(t)} (${columnList(columns)})`;
 }
 
+export function createFulltextIndexSql(t: { schema?: string; name: string }, name: string, column: string): string {
+  return `CREATE FULLTEXT INDEX ${physicalTableRef({ schema: t.schema, name })} ON ${physicalTableRef(t)} (${quoteIdent(column)})`;
+}
+
+export function dropFulltextIndexSql(schema: string | undefined, name: string): string {
+  return `DROP FULLTEXT INDEX ${physicalTableRef({ schema, name })}`;
+}
+
 export function dropIndexSql(schema: string | undefined, name: string): string {
   return `DROP INDEX ${physicalTableRef({ schema, name })}`;
 }

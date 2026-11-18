@@ -159,6 +159,12 @@ export interface IndexDef {
   fields: string[];
 }
 
+/** One HANA full-text index (`@@fulltext`); HANA indexes one column per full-text index. */
+export interface FulltextIndexDef {
+  dbName: string;
+  field: string;
+}
+
 export interface ModelDef {
   name: string;
   /** Table (or view) name (`@@map`, defaults to `name`). */
@@ -172,6 +178,8 @@ export interface ModelDef {
   primaryKey: { name: string; dbName: string; fields: string[] } | null;
   uniques: UniqueDef[];
   indexes: IndexDef[];
+  /** `@@fulltext` indexes, one per column. */
+  fulltext?: FulltextIndexDef[];
   /**
    * Columns declared as `Unsupported("TYPE")`: not exposed in the client, but kept so
    * migrations and drift detection know the column exists.

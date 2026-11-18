@@ -402,6 +402,15 @@ function buildColumns(plan: ModelPlan, enums: Map<string, { name: string; dbName
       const m = mapArg(i.name, "IX", t.name, i.columns);
       plan.blockAttrs.push(`@@index(${f}${m ? `, ${m}` : ""})`);
     }
+    for (const x of [...(table.fulltext ?? [])].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const f = fieldsOf([x.column]);
+      if (!f) {
+        warnings.push(`Full-text index '${x.name}' on '${plan.key}' uses an unsupported column; it was left out.`);
+        continue;
+      }
+      const m = mapArg(x.name, "FTI", t.name, [x.column]);
+      plan.blockAttrs.push(`@@fulltext(${f}${m ? `, ${m}` : ""})`);
+    }
   }
 }
 

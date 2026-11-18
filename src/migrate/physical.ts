@@ -37,6 +37,12 @@ export interface PhysicalIndex {
   columns: string[];
 }
 
+/** A HANA full-text index on one column. */
+export interface PhysicalFulltextIndex {
+  name: string;
+  column: string;
+}
+
 export interface PhysicalForeignKey {
   name: string;
   columns: string[];
@@ -57,6 +63,7 @@ export interface PhysicalTable {
   uniques: PhysicalUnique[];
   indexes: PhysicalIndex[];
   foreignKeys: PhysicalForeignKey[];
+  fulltext?: PhysicalFulltextIndex[];
   /** Table comment (introspection only). */
   comment?: string;
 }

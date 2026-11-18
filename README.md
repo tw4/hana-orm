@@ -76,6 +76,30 @@ model Post {
 Instead of separate fields the datasource also accepts
 `url = env("DATABASE_URL")` with `hana://user:password@host:port/?databaseName=DB&currentSchema=APP&encrypt=true`.
 
+#### Full-text search
+
+```
+model Article {
+  id    Int     @id
+  title String
+  body  String? @db.NClob
+
+  @@fulltext([title, body])   // CREATE FULLTEXT INDEX "FTI_ARTICLE_title" …, one per column
+}
+```
+
+```ts
+await db.article.findMany({ where: { body: { search: '"query builder" OR orm -legacy' } } });
+// WHERE CONTAINS("body", ?)
+```
+
+- HANA indexes one column per full-text index, so `@@fulltext([a, b])` creates two indexes
+  (`FTI_<TABLE>_<COLUMN>`); `map:` names an index and then takes a single field.
+- `search` takes HANA's `CONTAINS` syntax: words are combined with AND, `OR`, `-word`
+  excludes, `"…"` is a phrase. It is bound as a parameter. It works on `String` fields; the
+  index makes it fast.
+- Migrations create and drop the indexes, `db pull` writes `@@fulltext`.
+
 #### Ignoring fields and models
 
 `@ignore` on a field and `@@ignore` on a model keep the column or table in the schema, so
@@ -299,7 +323,7 @@ npx hana-orm format --check   # CI: exit 1 and list files that are not formatted
 
 `format` aligns field names, types and attributes in columns, orders attributes
 (`@id @default @unique @updatedAt @ignore @relation @map @db.*`, then
-`@@id @@unique @@index @@map @@schema @@ignore`), normalizes spacing and blank lines and keeps
+`@@id @@unique @@index @@fulltext @@map @@schema @@ignore`), normalizes spacing and blank lines and keeps
 all comments. It is idempotent and refuses to touch a file with syntax errors.
 
 A schema can also be a folder: `--schema schema/` (or a `./schema/` folder found by default)
