@@ -146,6 +146,28 @@ Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `ag
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
 
+#### Connection pool
+
+```ts
+const db = new HanaClient({
+  poolSize: 10,             // max open connections
+  statementTimeout: 30_000, // ms per statement; default no limit
+  idleTimeout: 300_000,     // close connections idle this long (default 5 min, 0 = keep)
+  idleCheckAfter: 30_000,   // SELECT 1 FROM DUMMY before reusing a connection idle this long
+});
+```
+
+- A connection idle for `idleCheckAfter` is checked before it is handed out; a dead one (for
+  example after a database restart or a firewall dropping idle sockets) is closed and replaced.
+- A connection that fails with a "connection lost" error is closed instead of going back to the
+  pool. Reads (`query`, i.e. every `find*`, `count`, `aggregate`, `$queryRaw`) are retried once on
+  a new connection; writes and transactions are not, because the server may have applied them.
+- When a statement runs longer than `statementTimeout` its connection is closed, which stops the
+  statement on the server and rolls back its transaction, and it fails with `QueryTimeoutError`
+  (`code: "QUERY_TIMEOUT"`). A timed-out read is not retried.
+- `$disconnect()` refuses new work, fails requests waiting for a connection and waits up to
+  10 seconds for running statements before closing their connections.
+
 #### Many-to-many relations
 
 Two list fields that point at each other, with no `@relation(fields, references)` side, form an

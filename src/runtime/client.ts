@@ -120,6 +120,16 @@ export interface ClientOptions {
   driver?: Driver;
   /** Max pooled connections (default 10). */
   poolSize?: number;
+  /**
+   * Milliseconds a single statement may run (default: no limit). A statement that runs longer
+   * fails with `QueryTimeoutError`; its connection is closed, which stops it on the server and
+   * rolls back its transaction.
+   */
+  statementTimeout?: number;
+  /** Close pooled connections idle this long, in ms (default 5 minutes; 0 keeps them open). */
+  idleTimeout?: number;
+  /** Check a pooled connection with `SELECT 1 FROM DUMMY` when it was idle this long, in ms (default 30 s). */
+  idleCheckAfter?: number;
   /** `true`/"query" prints each SQL statement with its duration; a function receives the events. */
   log?: LogOption;
   /** Fields left out of every result unless a query asks for them: `{ user: { passwordHash: true } }`. */
@@ -205,7 +215,14 @@ export class BaseClient {
     const s = this._shared;
     if (!s.driver) {
       const config = resolveConnectionConfig(s.contract.datasource, s.options.datasource);
-      s.driver = new HanaDriver(config, { poolSize: s.options.poolSize, onQuery: makeLogger(s.options.log) });
+      const o = s.options;
+      s.driver = new HanaDriver(config, {
+        onQuery: makeLogger(o.log),
+        ...(o.poolSize !== undefined ? { poolSize: o.poolSize } : {}),
+        ...(o.statementTimeout !== undefined ? { statementTimeout: o.statementTimeout } : {}),
+        ...(o.idleTimeout !== undefined ? { idleTimeout: o.idleTimeout } : {}),
+        ...(o.idleCheckAfter !== undefined ? { idleCheckAfter: o.idleCheckAfter } : {}),
+      });
     }
     return s.driver;
   }
