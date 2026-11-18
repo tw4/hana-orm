@@ -5,6 +5,10 @@ result types follow your `select`/`include`, and a migrations CLI that produces 
 
 > Status: **alpha** (`0.1.0-alpha`). APIs may still change. See [ROADMAP.md](ROADMAP.md).
 
+**Documentation: <https://tw4.github.io/hana-orm/>** (getting started, schema and client
+reference, migrations, HANA type mapping, guides for moving from Prisma, TypeORM and the raw
+driver).
+
 - Pure TypeScript, no native query engine. The only native piece is SAP's own `@sap/hana-client`.
 - Familiar query API: `findMany`, `include`, nested writes, `$transaction`, `$extends`.
 - HANA-aware: identity columns, `@db.*` native types, schemas, MDC tenant databases,
@@ -76,6 +80,26 @@ model Post {
 Instead of separate fields the datasource also accepts
 `url = env("DATABASE_URL")` with `hana://user:password@host:port/?databaseName=DB&currentSchema=APP&encrypt=true`.
 
+#### Decimal values
+
+`Decimal` fields come back as strings by default, so no digit is lost. The generator option
+`decimal` changes that for one generated client:
+
+```
+generator client {
+  provider = "hana-orm"
+  output   = "./src/generated/hana"
+  decimal  = "decimal.js"   // "string" (default) | "number" | "decimal.js"
+}
+```
+
+- `"string"`: `"12345678901234.25"`; inputs may be strings or numbers.
+- `"number"`: JavaScript numbers. Values beyond about 15 significant digits are rounded.
+- `"decimal.js"`: [decimal.js](https://mikemcl.github.io/decimal.js/) `Decimal` instances; install
+  `decimal.js` in your project. Inputs may be `Decimal`, string or number.
+
+The generated types follow the mode. `_avg` is always a number.
+
 #### Ignoring fields and models
 
 `@ignore` on a field and `@@ignore` on a model keep the column or table in the schema, so
@@ -105,6 +129,39 @@ model Audit {
   default for `create` to work.
 - `Unsupported("TYPE")` fields are always hidden from the client. `db pull` keeps `@ignore`
   and `@@ignore` when it updates an existing schema.
+
+#### Check constraints, sequences and comments
+
+```
+/// Customer orders.
+model Order {
+  /// Order number shown to customers.
+  no     Int     @id @default(sequence("ORDER_NO", start: 1000)) @map("NO")
+  total  Decimal @map("TOTAL") @db.Decimal(15, 2)
+  status String  @default("open") @map("STATUS")
+
+  @@check("TOTAL >= 0")
+  @@check("STATUS IN ('open', 'paid')", map: "CK_ORDERS_STATUS")
+  @@map("ORDERS")
+}
+```
+
+- `@@check("SQL")` adds a check constraint with a raw SQL condition (it uses column names, not
+  field names). Without `map:` it is named `CK_<TABLE>_<n>` by its position. Adding one runs a
+  pre-check that fails the migration when existing rows violate it; a changed condition is
+  dropped and re-added. Conditions are compared ignoring case, spacing and outer parentheses.
+- `@default(sequence("NAME", start: 1, increment: 1))` on an `Int` or `BigInt` field creates the
+  sequence in the model's schema. HANA has no sequence column defaults, so the client inserts
+  `"NAME".NEXTVAL` and reads the value back with `CURRVAL`. Several fields may share a sequence
+  when they use the same options. `start` only applies when the sequence is created; a changed
+  `increment` becomes `ALTER SEQUENCE`. `db pull` cannot see which column uses a sequence, so it
+  keeps `sequence()` defaults of an existing schema but does not add new ones.
+- `///` doc comments on models and fields become `COMMENT ON TABLE` / `COMMENT ON COLUMN`, and
+  `db pull` writes table and column comments back as `///`. They do not change the contract
+  hash. In a project whose migrations predate comment support, `migrate status` reports the
+  docs as unplanned changes and the next `migrate plan` creates a migration that sets them;
+  database comments are not reported as drift against those older migrations.
+- Drift checks only look at sequences the schema defines; other sequences are left alone.
 
 ### Queries
 
@@ -167,6 +224,75 @@ const users = await db.user.findMany({ select: { id: true, fullName: true } }); 
 - They apply to the rows a query returns (finds, `create`, `update`, `upsert`, `delete`,
   `createManyAndReturn`), not to related rows loaded with `include`.
 - A later `$extends` can add fields or replace one with the same name.
+
+#### Events, logging and metrics
+
+```ts
+const db = new HanaClient({ log: ["warn", "error"], slowQueryThreshold: 500 });
+
+const off = db.$on("query", (e) => metrics.observe(e.durationMs)); // { sql, params, durationMs, inTransaction, error? }
+db.$on("error", (e) => report(e.target, e.message));               // e.g. target "User.create"
+off();                                                             // unsubscribe
+
+db.$metrics();
+// { queries: { total, failed, durationMs: { total, max, avg }, histogram: [{ le: 1, count }, …] },
+//   transactions: { total, committed, rolledBack }, pool: { size, open, idle, busy, waiting } }
+```
+
+- Events: `query` (every statement, also inside transactions), `info` (connect/disconnect),
+  `warn` (statements slower than `slowQueryThreshold` ms) and `error` (a failed model
+  operation, raw query or transaction).
+- Parameter values are **not** included in events or logs unless the client is created with
+  `logParams: true`; they may contain personal data.
+- `log: true` prints every statement; `log: ["query", "info", "warn", "error"]` prints those
+  events; `log: (e) => …` receives every statement.
+- A listener that throws is ignored, so it cannot break a query.
+
+#### Json filters
+
+```ts
+await db.event.findMany({
+  where: {
+    payload: { path: ["user", "country"], equals: "DE" },        // JSON_VALUE(...) = ?
+    meta: { path: "$.score", gte: 0.5 },                          // JSON_VALUE(... RETURNING DOUBLE)
+    tags: { array_contains: ["urgent", 3] },                     // the array has both elements
+  },
+});
+```
+
+- `path` is an array of keys and indexes (`["items", 0, "sku"]`) or a JSON path (`"$.items[0].sku"`).
+  Without it the operators apply to the whole document.
+- `equals` / `not` / `lt` / `lte` / `gt` / `gte` with a path compare a scalar: numbers as numbers,
+  booleans as `true`/`false`; `equals: null` matches JSON null and a missing key. Without a path,
+  `equals` compares the stored JSON text, so it only finds documents written in the same form
+  (hana-orm writes compact `JSON.stringify` output).
+- `string_contains` / `string_starts_with` / `string_ends_with` match the string at the path
+  (`mode: "insensitive"` is supported).
+- `array_contains` (an element or a list of elements, all required), `array_starts_with` and
+  `array_ends_with` take scalar elements. They match the array's JSON text, so an element of a
+  nested array can also match.
+
+#### Connection pool
+
+```ts
+const db = new HanaClient({
+  poolSize: 10,             // max open connections
+  statementTimeout: 30_000, // ms per statement; default no limit
+  idleTimeout: 300_000,     // close connections idle this long (default 5 min, 0 = keep)
+  idleCheckAfter: 30_000,   // SELECT 1 FROM DUMMY before reusing a connection idle this long
+});
+```
+
+- A connection idle for `idleCheckAfter` is checked before it is handed out; a dead one (for
+  example after a database restart or a firewall dropping idle sockets) is closed and replaced.
+- A connection that fails with a "connection lost" error is closed instead of going back to the
+  pool. Reads (`query`, i.e. every `find*`, `count`, `aggregate`, `$queryRaw`) are retried once on
+  a new connection; writes and transactions are not, because the server may have applied them.
+- When a statement runs longer than `statementTimeout` its connection is closed, which stops the
+  statement on the server and rolls back its transaction, and it fails with `QueryTimeoutError`
+  (`code: "QUERY_TIMEOUT"`). A timed-out read is not retried.
+- `$disconnect()` refuses new work, fails requests waiting for a connection and waits up to
+  10 seconds for running statements before closing their connections.
 
 #### Many-to-many relations
 
@@ -267,6 +393,26 @@ A source is `empty`, `schema`, `migrations` (the latest migration), `migrations:
 Against `db`, only the tables the other side defines are compared, so other tables in a shared
 schema are not reported. `migrate diff` never changes the database.
 
+### Squashing and splitting migrations
+
+```sh
+npx hana-orm migrate squash --from 20261101 --to 20261115 --name q4_schema   # ids may be prefixes
+npx hana-orm migrate split 20261117093000_init --at 3                        # new part from op 3
+npx hana-orm migrate split 20261117093000_init                               # one migration per op
+```
+
+`squash` concatenates the operations of a range of migrations into one migration that keeps the
+first one's `from` and the last one's `to` contract hash, so the migrations around it still chain.
+Hand-written SQL and data-migration scripts are copied as `<old id>_migration.sql` /
+`<old id>_migration.ts`. `split` cuts a migration into parts chained through generated contract
+hashes; parts before the last carry the final `contract.json`.
+
+The new `ops.json` lists the migrations it replaces with their checksums. A database that
+applied them treats the new migration as applied, and their history rows are not reported as
+missing; a database that applied only some of them is reported by `migrate status` and `deploy`
+stops. Both commands refuse when the configured database has the affected migrations applied,
+unless `--baseline` is passed, which records the result there as applied without running it.
+
 ### Seeding
 
 `hana-orm db seed` runs your seed command with the `.env` file loaded (the schema path is
@@ -321,7 +467,7 @@ npx hana-orm format --check   # CI: exit 1 and list files that are not formatted
 
 `format` aligns field names, types and attributes in columns, orders attributes
 (`@id @default @unique @updatedAt @ignore @relation @map @db.*`, then
-`@@id @@unique @@index @@map @@schema @@ignore`), normalizes spacing and blank lines and keeps
+`@@id @@unique @@index @@check @@map @@schema @@ignore`; `@@check` lines keep their order), normalizes spacing and blank lines and keeps
 all comments. It is idempotent and refuses to touch a file with syntax errors.
 
 A schema can also be a folder: `--schema schema/` (or a `./schema/` folder found by default)
@@ -339,6 +485,12 @@ npm run typecheck
 npm test                    # unit + type tests, no database needed
 npm run test:integration    # needs HANA_* env vars; writes only to temporary tables
 ```
+
+`docker-compose.hana.yml` starts a local SAP HANA Express for the integration tests (see the
+comments in the file). The **HANA integration** workflow does the same in CI every night and
+on demand (Actions → HANA integration → Run workflow, optionally on a larger or self-hosted
+runner): it starts HANA Express, checks the connection with `node scripts/check-hana.ts` and
+runs `npm run test:integration` with `HANA_ORM_ALLOW_DDL=1`, failing if any test was skipped.
 
 ## License
 

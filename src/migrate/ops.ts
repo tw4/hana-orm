@@ -17,6 +17,13 @@ export type OpKind =
   | "addUnique"
   | "createIndex"
   | "addForeignKey"
+  | "dropCheck"
+  | "addCheck"
+  | "createSequence"
+  | "alterSequence"
+  | "dropSequence"
+  /** `COMMENT ON TABLE` / `COMMENT ON COLUMN` (from `///` doc comments). */
+  | "setComment"
   /** Hand-written SQL read from a file in the migration folder (`migrate plan --empty`). */
   | "sqlFile"
   /** A TypeScript/JavaScript data migration in the migration folder (`migrate plan --script`). */
@@ -50,6 +57,16 @@ export interface MigrationOp {
 
 export const OPS_FORMAT_VERSION = 1;
 
+/**
+ * A migration that was squashed or split into this one. A database where it (or, recursively,
+ * everything it replaced) is applied already has this migration's changes.
+ */
+export interface ReplacedMigration {
+  id: string;
+  checksum: string;
+  replaces?: ReplacedMigration[];
+}
+
 export interface OpsFile {
   formatVersion: typeof OPS_FORMAT_VERSION;
   id: string;
@@ -59,6 +76,8 @@ export interface OpsFile {
   /** Contract hash after the migration. */
   to: string;
   ops: MigrationOp[];
+  /** Set by `migrate squash` and `migrate split`. */
+  replaces?: ReplacedMigration[];
 }
 
 export function destructiveOps(ops: readonly MigrationOp[]): MigrationOp[] {

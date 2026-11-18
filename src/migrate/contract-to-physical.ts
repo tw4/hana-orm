@@ -1,6 +1,6 @@
 import type { Contract, ModelDef, ReferentialAction } from "../schema/contract.ts";
 import { columnFields, relationFields } from "../schema/contract.ts";
-import type { FkAction, PhysicalColumn, PhysicalSchema, PhysicalTable } from "./physical.ts";
+import type { FkAction, PhysicalColumn, PhysicalSchema, PhysicalSequence, PhysicalTable } from "./physical.ts";
 import { MAX_IDENT_LENGTH, keyOf, tableKey } from "./physical.ts";
 import { DEFAULT_ENUM_TYPE, DEFAULT_SCALAR_TYPES, contractDefaultToSql, nativeTypeToDdl } from "./types.ts";
 
@@ -37,12 +37,23 @@ export function modelTableKey(model: Pick<ModelDef, "schema" | "dbName">, defaul
 }
 
 /**
+ * False for a migration snapshot written before `///` docs became database comments: the
+ * migrations up to it never set comments, so its docs say nothing about the database.
+ */
+export function managesComments(contract: object): boolean {
+  const isSnapshot = "hash" in contract && !("datasource" in contract);
+  return !isSnapshot || (contract as { comments?: boolean }).comments === true;
+}
+
+/**
  * Expected physical schema for a contract. Views (`kind: "view"`) are not managed by
  * migrations and are left out.
  */
 export function contractToPhysical(contract: Pick<Contract, "models" | "enums">, options: ContractToPhysicalOptions = {}): PhysicalSchema {
   const { defaultSchema } = options;
+  const comments = managesComments(contract);
   const tables: Record<string, PhysicalTable> = {};
+  const sequences: Record<string, PhysicalSequence> = {};
   const models = Object.values(contract.models).filter((m) => m.kind === "model");
 
   for (const model of models) {
@@ -57,6 +68,17 @@ export function contractToPhysical(contract: Pick<Contract, "models" | "enums">,
       const dflt = contractDefaultToSql(f.default, type, enumDef);
       if (dflt !== undefined) col.default = dflt;
       if (f.default?.kind === "autoincrement") col.identity = true;
+      if (f.doc && comments) col.comment = f.doc;
+      if (f.default?.kind === "sequence") {
+        const d = f.default;
+        const seqSchema = modelSchema(model, defaultSchema);
+        sequences[tableKey(seqSchema, d.name)] = {
+          ...(seqSchema ? { schema: seqSchema } : {}),
+          name: d.name,
+          ...(d.start !== undefined ? { start: d.start } : {}),
+          ...(d.increment !== undefined ? { increment: d.increment } : {}),
+        };
+      }
       return col;
     });
     for (const ignored of model.ignoredColumns ?? []) {
@@ -74,6 +96,8 @@ export function contractToPhysical(contract: Pick<Contract, "models" | "enums">,
       indexes: model.indexes.map((i) => ({ name: i.dbName, columns: i.fields.map(colName) })),
       foreignKeys: [],
     };
+    if (model.checks?.length) table.checks = model.checks.map((c) => ({ name: c.dbName, sql: c.sql }));
+    if (model.doc && comments) table.comment = model.doc;
     const schema = modelSchema(model, defaultSchema);
     if (schema) table.schema = schema;
 
@@ -98,7 +122,7 @@ export function contractToPhysical(contract: Pick<Contract, "models" | "enums">,
     }
     tables[keyOf(table)] = table;
   }
-  return { tables };
+  return Object.keys(sequences).length ? { tables, sequences } : { tables };
 }
 
 export function truncateIdent(name: string): string {

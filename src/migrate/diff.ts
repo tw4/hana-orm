@@ -8,6 +8,15 @@
 
 import { quoteIdent } from "../runtime/sql.ts";
 import {
+  addCheckSql,
+  alterSequenceSql,
+  checkHoldsCheck,
+  commentOnColumnSql,
+  commentOnTableSql,
+  createSequenceSql,
+  dropSequenceSql,
+  normalizeCheckSql,
+  sequenceExistsCheck,
   addColumnSql,
   addForeignKeySql,
   addPrimaryKeySql,
@@ -32,7 +41,7 @@ import {
   tableExistsCheck,
 } from "./ddl.ts";
 import type { MigrationOp } from "./ops.ts";
-import type { PhysicalColumn, PhysicalForeignKey, PhysicalPrimaryKey, PhysicalSchema, PhysicalTable } from "./physical.ts";
+import type { PhysicalCheck, PhysicalColumn, PhysicalForeignKey, PhysicalPrimaryKey, PhysicalSchema, PhysicalTable } from "./physical.ts";
 import { clonePhysical, keyOf, refKeyOf, sameColumns, tableKey } from "./physical.ts";
 import { classifyTypeChange, normalizeDefaultSql, normalizeType } from "./types.ts";
 
@@ -54,8 +63,12 @@ const GROUPS = [
   "dropForeignKey",
   "dropIndex",
   "dropUnique",
+  "dropCheck",
   "dropPrimaryKey",
   "dropTable",
+  "dropSequence",
+  "createSequence",
+  "alterSequence",
   "createTable",
   "addColumn",
   "alterColumn",
@@ -64,6 +77,8 @@ const GROUPS = [
   "addUnique",
   "createIndex",
   "addForeignKey",
+  "addCheck",
+  "setComment",
 ] as const;
 
 interface Pending {
@@ -73,7 +88,7 @@ interface Pending {
 
 /** Applies table and column renames to a copy of `from`, including references in foreign keys. */
 export function applyRenames(from: PhysicalSchema, renames: Renames): PhysicalSchema {
-  const out: PhysicalSchema = { tables: {} };
+  const out: PhysicalSchema = { tables: {}, ...(from.sequences ? { sequences: clonePhysical(from.sequences) } : {}) };
   const colMapFor = (toKey: string): Record<string, string> => renames.columns[toKey] ?? {};
   const mapCol = (toKey: string, c: string): string => colMapFor(toKey)[c] ?? c;
   const newKey = (key: string): string => renames.tables[key] ?? key;
@@ -223,6 +238,8 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
     );
     for (const i of t.indexes) add(createIndexOp(key, t, i.name, i.columns), key, i.name);
     for (const fk of t.foreignKeys) add(addFkOp(key, t, fk), key, fk.name);
+    if (t.comment) add(tableCommentOp(key, t, t.comment), key);
+    for (const c of t.columns) if (c.comment) add(columnCommentOp(key, t, c.name, c.comment), key, c.name);
   }
 
   // ---- changed tables ---------------------------------------------------------
@@ -350,6 +367,55 @@ export function diffSchemas(from: PhysicalSchema, to: PhysicalSchema, options: D
     const recreate = fks.kept.filter(([x, y]) => fkTouchesRetyped(key, y) || fkUsesDroppedKey(y) || (x.name !== y.name && !isSystemName(x.name) && !isSystemName(y.name)));
     for (const x of [...fks.removed, ...recreate.map(([x]) => x)]) add(dropFkOp(key, tb, x), key, x.name);
     for (const y of [...fks.added, ...recreate.map(([, y]) => y)]) add(addFkOp(key, tb, y), key, y.name);
+
+    // check constraints: a changed condition is dropped and re-added
+    const ck = matchNamed(ta.checks ?? [], tb.checks ?? [], sameCheck);
+    const renamedChecks = ck.kept.filter(([x, y]) => x.name !== y.name && !isSystemName(x.name));
+    for (const x of [...ck.removed, ...renamedChecks.map(([x]) => x)]) {
+      add({ kind: "dropCheck", description: `Drop check constraint ${quoteIdent(x.name)} of ${physicalTableRef(tb)}`, sql: [dropConstraintSql(tb, x.name)], table: key }, key, x.name);
+    }
+    for (const y of [...ck.added, ...renamedChecks.map(([, y]) => y)]) add(addCheckOp(key, tb, y), key, y.name);
+
+    // comments (introspected tables without a comment and schema models without /// are equal)
+    if ((ta.comment ?? "") !== (tb.comment ?? "")) add(tableCommentOp(key, tb, tb.comment), key);
+    for (const cb of tb.columns) {
+      const ca = ta.columns.find((c) => c.name === cb.name);
+      if ((ca?.comment ?? "") !== (cb.comment ?? "")) add(columnCommentOp(key, tb, cb.name, cb.comment), key, cb.name);
+    }
+  }
+
+  // ---- sequences --------------------------------------------------------------
+  const sa = a.sequences ?? {};
+  const sb = b.sequences ?? {};
+  for (const [key, x] of Object.entries(sa)) {
+    if (sb[key]) continue;
+    add(
+      {
+        kind: "dropSequence",
+        description: `Drop sequence ${physicalTableRef(x)}`,
+        sql: [dropSequenceSql(x)],
+        destructive: true,
+        postcheck: sequenceExistsCheck(x, false, `sequence ${physicalTableRef(x)} no longer exists`),
+      },
+      key,
+    );
+  }
+  for (const [key, y] of Object.entries(sb)) {
+    const x = sa[key];
+    if (!x) {
+      add(
+        {
+          kind: "createSequence",
+          description: `Create sequence ${physicalTableRef(y)}`,
+          sql: [createSequenceSql(y)],
+          precheck: sequenceExistsCheck(y, false, `sequence ${physicalTableRef(y)} does not exist yet`),
+          postcheck: sequenceExistsCheck(y, true, `sequence ${physicalTableRef(y)} exists`),
+        },
+        key,
+      );
+    } else if ((x.increment ?? 1) !== (y.increment ?? 1)) {
+      add({ kind: "alterSequence", description: `Change the increment of sequence ${physicalTableRef(y)} to ${y.increment ?? 1}`, sql: [alterSequenceSql(y)] }, key);
+    }
   }
 
   // dropped FKs of dropped tables were added above; sort into the final order
@@ -505,6 +571,29 @@ function matchNamed<T extends { name: string }>(
   }
   for (const y of to) if (!usedTo.has(y) && !added.includes(y)) added.push(y);
   return { removed, added, kept };
+}
+
+function sameCheck(x: PhysicalCheck, y: PhysicalCheck): boolean {
+  return normalizeCheckSql(x.sql) === normalizeCheckSql(y.sql);
+}
+
+function addCheckOp(key: string, t: { schema?: string; name: string }, c: PhysicalCheck): MigrationOp {
+  return {
+    kind: "addCheck",
+    description: `Add check constraint ${quoteIdent(c.name)} on ${physicalTableRef(t)} (${c.sql})`,
+    sql: [addCheckSql(t, c)],
+    table: key,
+    precheck: checkHoldsCheck(t, c),
+  };
+}
+
+function tableCommentOp(key: string, t: { schema?: string; name: string }, comment: string | undefined): MigrationOp {
+  return { kind: "setComment", description: comment ? `Set the comment of ${physicalTableRef(t)}` : `Remove the comment of ${physicalTableRef(t)}`, sql: [commentOnTableSql(t, comment)], table: key };
+}
+
+function columnCommentOp(key: string, t: { schema?: string; name: string }, column: string, comment: string | undefined): MigrationOp {
+  const target = `${physicalTableRef(t)}.${quoteIdent(column)}`;
+  return { kind: "setComment", description: comment ? `Set the comment of ${target}` : `Remove the comment of ${target}`, sql: [commentOnColumnSql(t, column, comment)], table: key };
 }
 
 function dropFkOp(key: string, t: { schema?: string; name: string }, fk: PhysicalForeignKey): MigrationOp {

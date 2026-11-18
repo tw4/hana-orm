@@ -56,10 +56,31 @@ export interface BoolNullableFilter {
   not?: boolean | null | BoolNullableFilter;
 }
 
+/**
+ * Filter on a `Json` field. Without `path` the operators apply to the whole document (`$`).
+ * With `path` (`["address", "city"]` or `"$.address.city"`) they apply to the value there:
+ * `equals`/`not`/`lt`/`lte`/`gt`/`gte` compare a scalar (`JSON_VALUE`), `string_*` match a string
+ * value, `array_*` test a scalar element of an array (`JSON_QUERY`).
+ */
 export interface JsonFilter {
+  path?: string | (string | number)[];
   equals?: JsonValue;
   not?: JsonValue;
+  lt?: number | string;
+  lte?: number | string;
+  gt?: number | string;
+  gte?: number | string;
+  string_contains?: string;
+  string_starts_with?: string;
+  string_ends_with?: string;
+  /** For the `string_*` operators. */
+  mode?: QueryMode;
+  /** The array contains this element, or every element of this list (scalars only). */
+  array_contains?: JsonScalar | JsonScalar[];
+  array_starts_with?: JsonScalar;
+  array_ends_with?: JsonScalar;
 }
+export type JsonScalar = string | number | boolean | null;
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 /** Atomic number updates. */
