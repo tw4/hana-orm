@@ -1,0 +1,19 @@
+// Check constraints, sequences and comments (issue #24).
+
+datasource db {
+  provider = "hana"
+  schema   = "APP"
+}
+
+/// Customer orders.
+model Order {
+  /// Order number, drawn from a sequence.
+  no     Int     @id @default(sequence("ORDER_NO", start: 1000)) @map("NO")
+  ref    BigInt  @default(sequence("ORDER_REF")) @map("REF")
+  total  Decimal @map("TOTAL") @db.Decimal(15, 2)
+  status String  @default("open") @map("STATUS") @db.NVarChar(20)
+
+  @@check("TOTAL >= 0")
+  @@check("STATUS IN ('open', 'paid')", map: "CK_ORDERS_STATUS")
+  @@map("ORDERS")
+}
