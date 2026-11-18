@@ -5,6 +5,10 @@ result types follow your `select`/`include`, and a migrations CLI that produces 
 
 > Status: **alpha** (`0.1.0-alpha`). APIs may still change. See [ROADMAP.md](ROADMAP.md).
 
+**Documentation: <https://tw4.github.io/hana-orm/>** (getting started, schema and client
+reference, migrations, HANA type mapping, guides for moving from Prisma, TypeORM and the raw
+driver).
+
 - Pure TypeScript, no native query engine. The only native piece is SAP's own `@sap/hana-client`.
 - Familiar query API: `findMany`, `include`, nested writes, `$transaction`, `$extends`.
 - HANA-aware: identity columns, `@db.*` native types, schemas, MDC tenant databases,
