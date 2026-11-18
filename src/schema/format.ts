@@ -4,7 +4,7 @@
  * - Two-space indentation, one blank line between top-level blocks, no runs of blank lines.
  * - Field names, types and attributes are aligned in columns per model.
  * - Field attributes are put in a fixed order (`@id @default @unique @updatedAt @ignore
- *   @relation @map @db.*`); runs of block attributes are ordered `@@id @@unique @@index @@map
+ *   @relation @map @db.*`); runs of block attributes are ordered `@@id @@unique @@index @@check @@map
  *   @@schema @@ignore`.
  * - Attribute arguments are spaced uniformly: `@db.Decimal(15, 2)`, `fields: [a, b]`.
  * - `key = value` lines in `datasource`/`generator` blocks are aligned on `=`.
@@ -24,7 +24,7 @@ interface Line {
 }
 
 const FIELD_ATTR_ORDER = ["id", "default", "unique", "updatedAt", "ignore", "relation", "map"];
-const BLOCK_ATTR_ORDER = ["id", "unique", "index", "map", "schema", "ignore"];
+const BLOCK_ATTR_ORDER = ["id", "unique", "index", "check", "map", "schema", "ignore"];
 
 /** Formats schema source. Throws `SchemaError` when the source has syntax errors. */
 export function formatSchema(source: string, file?: string): string {

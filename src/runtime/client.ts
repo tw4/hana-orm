@@ -1,3 +1,4 @@
+import type { DecimalConstructor, DecimalMode } from "./codec.ts";
 import type { Contract, ModelDef } from "../schema/contract.ts";
 import { clientContract } from "../schema/contract.ts";
 import { formatTimestamp } from "./codec.ts";
@@ -125,6 +126,16 @@ export interface ClientOptions {
   driver?: Driver;
   /** Max pooled connections (default 10). */
   poolSize?: number;
+  /**
+   * Milliseconds a single statement may run (default: no limit). A statement that runs longer
+   * fails with `QueryTimeoutError`; its connection is closed, which stops it on the server and
+   * rolls back its transaction.
+   */
+  statementTimeout?: number;
+  /** Close pooled connections idle this long, in ms (default 5 minutes; 0 keeps them open). */
+  idleTimeout?: number;
+  /** Check a pooled connection with `SELECT 1 FROM DUMMY` when it was idle this long, in ms (default 30 s). */
+  idleCheckAfter?: number;
   /** `true`/"query" prints each SQL statement with its duration; a function receives the events. */
   log?: LogOption;
   /** Include bound parameter values in query events and logs (default false: values may be personal data). */
@@ -180,10 +191,19 @@ export interface ExtensionArgs {
 
 export const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
+/** Settings the generator bakes into a client class (they shape its types). */
+export interface GeneratedConfig {
+  /** How Decimal fields are returned (generator option `decimal`, default "string"). */
+  decimal?: DecimalMode;
+  /** decimal.js' class, passed by clients generated with `decimal = "decimal.js"`. */
+  Decimal?: DecimalConstructor;
+}
+
 interface Shared {
   contract: Contract;
   options: ClientOptions;
   observer: Observer;
+  config: GeneratedConfig;
   engine: Engine | undefined;
   driver: Driver | undefined;
 }
@@ -194,13 +214,13 @@ export class BaseClient {
   /** @internal */ _tx: Queryable | undefined;
   /** @internal */ _extensions: ExtensionArgs[];
 
-  constructor(contract: Contract, options: ClientOptions = {}) {
+  constructor(contract: Contract, options: ClientOptions = {}, config: GeneratedConfig = {}) {
     const observer = new Observer({
       ...(options.logParams !== undefined ? { logParams: options.logParams } : {}),
       ...(options.slowQueryThreshold !== undefined ? { slowQueryThreshold: options.slowQueryThreshold } : {}),
     });
     installLogger(observer, options.log);
-    this._shared = { contract: clientContract(contract), options, observer, engine: undefined, driver: options.driver ? new InstrumentedDriver(options.driver, observer) : undefined };
+    this._shared = { contract: clientContract(contract), options, config, observer, engine: undefined, driver: options.driver ? new InstrumentedDriver(options.driver, observer) : undefined };
     this._tx = undefined;
     this._extensions = [];
     this._install();
@@ -211,7 +231,10 @@ export class BaseClient {
   /** @internal */
   _engine(): Engine {
     const s = this._shared;
-    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), { omit: s.options.omit });
+    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), {
+      omit: s.options.omit,
+      decode: { ...(s.config.decimal ? { decimal: s.config.decimal } : {}), ...(s.config.Decimal ? { Decimal: s.config.Decimal } : {}) },
+    });
     return s.engine;
   }
 
@@ -220,7 +243,16 @@ export class BaseClient {
     const s = this._shared;
     if (!s.driver) {
       const config = resolveConnectionConfig(s.contract.datasource, s.options.datasource);
-      s.driver = new InstrumentedDriver(new HanaDriver(config, { ...(s.options.poolSize !== undefined ? { poolSize: s.options.poolSize } : {}) }), s.observer);
+      const o = s.options;
+      s.driver = new InstrumentedDriver(
+        new HanaDriver(config, {
+          ...(o.poolSize !== undefined ? { poolSize: o.poolSize } : {}),
+          ...(o.statementTimeout !== undefined ? { statementTimeout: o.statementTimeout } : {}),
+          ...(o.idleTimeout !== undefined ? { idleTimeout: o.idleTimeout } : {}),
+          ...(o.idleCheckAfter !== undefined ? { idleCheckAfter: o.idleCheckAfter } : {}),
+        }),
+        s.observer,
+      );
     }
     return s.driver;
   }
@@ -475,10 +507,11 @@ function installLogger(observer: Observer, log: LogOption | undefined): void {
 }
 
 /** Used by generated code: `export const HanaClient = createClientClass(contract)`. */
-export function createClientClass(contract: Contract): new (options?: ClientOptions) => BaseClient {
+export function createClientClass(contract: Contract, config: GeneratedConfig = {}): new (options?: ClientOptions) => BaseClient {
+  if (config.decimal === "decimal.js" && !config.Decimal) throw new Error('createClientClass: decimal "decimal.js" needs the Decimal class');
   return class HanaClient extends BaseClient {
     constructor(options?: ClientOptions) {
-      super(contract, options);
+      super(contract, options, config);
     }
   };
 }

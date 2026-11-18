@@ -7,7 +7,7 @@ import type { GraphProblem, LoadedMigration } from "./files.ts";
 import { readSqlFile, short, verifyGraph } from "./files.ts";
 import type { HistoryRecord, HistoryStore } from "./history.ts";
 import { LOCK_HEARTBEAT_MS, lockOwner } from "./history.ts";
-import type { Check, MigrationOp } from "./ops.ts";
+import type { Check, MigrationOp, ReplacedMigration } from "./ops.ts";
 import { splitSqlStatements } from "./sql-split.ts";
 
 export class CheckFailedError extends Error {
@@ -105,32 +105,74 @@ export interface StatusReport {
   graph: GraphProblem[];
   /** Not-yet-applied migrations that sort before an applied one. */
   outOfOrder: string[];
+  /** Squashed or split migrations of which the database has only part applied. */
+  partiallyReplaced: string[];
   pending: LoadedMigration[];
   lastApplied: HistoryRecord | null;
 }
 
+/** Ids of every migration `replaces` names, recursively. */
+export function replacedIds(replaces: readonly ReplacedMigration[] | undefined, out: Set<string> = new Set()): Set<string> {
+  for (const r of replaces ?? []) {
+    out.add(r.id);
+    replacedIds(r.replaces, out);
+  }
+  return out;
+}
+
+type ReplacedState = "applied" | "partial" | "none";
+
+/**
+ * Whether the migrations a squashed or split migration replaces are applied: all of them
+ * (recursively through earlier squashes), some of them, or none.
+ */
+function replacedState(replaces: readonly ReplacedMigration[], applied: ReadonlyMap<string, HistoryRecord>): ReplacedState {
+  const one = (r: ReplacedMigration): ReplacedState => {
+    const rec = applied.get(r.id);
+    if (rec) return rec.checksum === r.checksum ? "applied" : "partial";
+    return r.replaces?.length ? replacedState(r.replaces, applied) : "none";
+  };
+  const states = replaces.map(one);
+  if (states.length && states.every((s) => s === "applied")) return "applied";
+  return states.some((s) => s !== "none") ? "partial" : "none";
+}
+
+const byIdOrder = (a: { id: string }, b: { id: string }): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
 export function computeStatus(migrations: readonly LoadedMigration[], history: readonly HistoryRecord[]): StatusReport {
   const byId = new Map(history.map((h) => [h.id, h]));
+  const appliedById = new Map(history.filter((h) => h.status === "applied").map((h) => [h.id, h]));
+  const partiallyReplaced: string[] = [];
+  /** Applied through the migrations they replace; they have no history record of their own. */
+  const virtual: HistoryRecord[] = [];
   const entries: MigrationStatusEntry[] = migrations.map((m) => {
     const record = byId.get(m.id);
     let state: MigrationState = "pending";
-    if (record) {
-      if (record.status === "applied") state = record.checksum === m.checksum ? "applied" : "modified";
-      else state = record.status;
-    }
+    if (record?.status === "applied") state = record.checksum === m.checksum ? "applied" : "modified";
+    else if (m.ops.replaces?.length && replacedState(m.ops.replaces, appliedById) !== "none") {
+      if (replacedState(m.ops.replaces, appliedById) === "applied") {
+        state = "applied";
+        const last = [...replacedIds(m.ops.replaces)].map((id) => appliedById.get(id)).filter((r) => r !== undefined).sort(byIdOrder).at(-1)!;
+        virtual.push({ ...last, id: m.id, name: m.name, checksum: m.checksum, fromHash: m.ops.from, toHash: m.ops.to, log: "applied as the migrations it replaces" });
+      } else partiallyReplaced.push(m.id);
+    } else if (record) state = record.status;
     return { id: m.id, state, migration: m, ...(record ? { record } : {}) };
   });
   const onDisk = new Set(migrations.map((m) => m.id));
-  const missing = history.filter((h) => h.status === "applied" && !onDisk.has(h.id));
-  const applied = history.filter((h) => h.status === "applied").sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const replaced = new Set<string>();
+  for (const m of migrations) replacedIds(m.ops.replaces, replaced);
+  const missing = history.filter((h) => h.status === "applied" && !onDisk.has(h.id) && !replaced.has(h.id));
+  // Records of replaced migrations stand for the migrations that replaced them.
+  const applied = [...history.filter((h) => h.status === "applied" && !(replaced.has(h.id) && !onDisk.has(h.id))), ...virtual].sort(byIdOrder);
   const lastApplied = applied.at(-1) ?? null;
-  const notApplied = entries.filter((e) => e.state === "pending" || e.state === "failed" || e.state === "rolled_back");
+  const notApplied = entries.filter((e) => (e.state === "pending" || e.state === "failed" || e.state === "rolled_back") && !partiallyReplaced.includes(e.id));
   const outOfOrder = lastApplied ? notApplied.filter((e) => e.id < lastApplied.id).map((e) => e.id) : [];
   return {
     entries,
     missing,
     graph: verifyGraph(migrations),
     outOfOrder,
+    partiallyReplaced,
     pending: notApplied.filter((e) => !outOfOrder.includes(e.id)).map((e) => e.migration),
     lastApplied,
   };
@@ -145,6 +187,14 @@ export function deployBlockers(report: StatusReport): string[] {
     }
   }
   for (const h of report.missing) out.push(`Migration ${h.id} is applied in the database but its folder is missing.`);
+  for (const id of report.partiallyReplaced) {
+    const m = report.entries.find((e) => e.id === id)?.migration;
+    const ids = [...replacedIds(m?.ops.replaces)].join(", ");
+    out.push(
+      `Migration ${id} replaces ${ids}, but the database has only some of them applied (or applied with other contents). ` +
+        "Deploy the original migrations here first (check out the commit before the squash or split), or fix the history with `migrate resolve`.",
+    );
+  }
   for (const g of report.graph) out.push(g.message);
   for (const id of report.outOfOrder) {
     out.push(`Migration ${id} is not applied but is older than the last applied migration ${report.lastApplied?.id}. It was probably merged from another branch; re-plan it, or mark it with \`migrate resolve --applied ${id}\`.`);

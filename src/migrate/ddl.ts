@@ -2,7 +2,8 @@
 
 import { quoteIdent } from "../runtime/sql.ts";
 import type { Check } from "./ops.ts";
-import type { PhysicalColumn, PhysicalForeignKey, PhysicalTable } from "./physical.ts";
+import type { PhysicalCheck, PhysicalColumn, PhysicalForeignKey, PhysicalSequence, PhysicalTable } from "./physical.ts";
+import { sqlString } from "./types.ts";
 
 export function physicalTableRef(t: { schema?: string; name: string }): string {
   return t.schema ? `${quoteIdent(t.schema)}.${quoteIdent(t.name)}` : quoteIdent(t.name);
@@ -30,6 +31,9 @@ export function createTableSql(t: PhysicalTable): string {
   }
   for (const u of [...t.uniques].sort((a, b) => cmp(a.name, b.name))) {
     parts.push(`  CONSTRAINT ${quoteIdent(u.name)} UNIQUE (${columnList(u.columns)})`);
+  }
+  for (const c of [...(t.checks ?? [])].sort((a, b) => cmp(a.name, b.name))) {
+    parts.push(`  CONSTRAINT ${quoteIdent(c.name)} CHECK (${c.sql})`);
   }
   return `CREATE COLUMN TABLE ${physicalTableRef(t)} (\n${parts.join(",\n")}\n)`;
 }
@@ -98,6 +102,97 @@ export function addForeignKeySql(t: { schema?: string; name: string }, fk: Physi
   );
 }
 
+export function addCheckSql(t: { schema?: string; name: string }, c: PhysicalCheck): string {
+  return `ALTER TABLE ${physicalTableRef(t)} ADD CONSTRAINT ${quoteIdent(c.name)} CHECK (${c.sql})`;
+}
+
+export function commentOnTableSql(t: { schema?: string; name: string }, comment: string | undefined): string {
+  return `COMMENT ON TABLE ${physicalTableRef(t)} IS ${comment ? sqlString(comment) : "NULL"}`;
+}
+
+export function commentOnColumnSql(t: { schema?: string; name: string }, column: string, comment: string | undefined): string {
+  return `COMMENT ON COLUMN ${physicalTableRef(t)}.${quoteIdent(column)} IS ${comment ? sqlString(comment) : "NULL"}`;
+}
+
+export function createSequenceSql(s: PhysicalSequence): string {
+  let sql = `CREATE SEQUENCE ${physicalTableRef(s)}`;
+  if (s.start !== undefined) sql += ` START WITH ${s.start}`;
+  if (s.increment !== undefined) sql += ` INCREMENT BY ${s.increment}`;
+  return sql;
+}
+
+export function alterSequenceSql(s: PhysicalSequence): string {
+  return `ALTER SEQUENCE ${physicalTableRef(s)} INCREMENT BY ${s.increment ?? 1}`;
+}
+
+export function dropSequenceSql(s: { schema?: string; name: string }): string {
+  return `DROP SEQUENCE ${physicalTableRef(s)}`;
+}
+
+/**
+ * Canonical form of a check condition for comparison: keywords and unquoted identifiers upper
+ * case, whitespace collapsed (and removed next to punctuation), wrapping parentheses removed.
+ * String literals and quoted identifiers are kept as written.
+ */
+export function normalizeCheckSql(sql: string): string {
+  let out = "";
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    if (ch === "'" || ch === '"') {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === ch) {
+          if (sql[j + 1] === ch) j += 2;
+          else break;
+        } else j++;
+      }
+      out += sql.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (!out.endsWith(" ")) out += " ";
+      i++;
+      continue;
+    }
+    out += ch.toUpperCase();
+    i++;
+  }
+  // no spaces around punctuation and operators (outside literals, which contain no bare spaces here)
+  out = out.replace(/ ?([(),=<>!+\-*/|]) ?/g, (m, p: string, offset: number, all: string) => (inLiteral(all, offset) ? m : p)).trim();
+  for (;;) {
+    if (!out.startsWith("(") || !out.endsWith(")") || !wrapsAll(out)) break;
+    out = out.slice(1, -1).trim();
+  }
+  return out;
+}
+
+function inLiteral(s: string, offset: number): boolean {
+  let quote: string | null = null;
+  for (let i = 0; i < offset; i++) {
+    const c = s[i]!;
+    if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === "'" || c === '"') quote = c;
+  }
+  return quote !== null;
+}
+
+/** True when the opening parenthesis at 0 closes at the last character. */
+function wrapsAll(s: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (inLiteral(s, i)) continue;
+    if (s[i] === "(") depth++;
+    else if (s[i] === ")") {
+      depth--;
+      if (depth === 0 && i < s.length - 1) return false;
+    }
+  }
+  return depth === 0;
+}
+
 // ---- checks -----------------------------------------------------------------
 
 function schemaPredicate(schema: string | undefined, params: (string | number | boolean | null)[]): string {
@@ -133,6 +228,18 @@ export function noNullsCheck(t: { schema?: string; name: string }, column: strin
     sql: `SELECT 1 FROM ${physicalTableRef(t)} WHERE ${quoteIdent(column)} IS NULL LIMIT 1`,
     expect: "empty",
   };
+}
+
+export function sequenceExistsCheck(s: { schema?: string; name: string }, expectExists: boolean, description: string): Check {
+  const params: (string | number | boolean | null)[] = [];
+  const where = schemaPredicate(s.schema, params);
+  params.push(s.name);
+  return { description, sql: `SELECT 1 FROM SYS.SEQUENCES WHERE ${where} AND SEQUENCE_NAME = ?`, params, expect: expectExists ? "nonEmpty" : "empty" };
+}
+
+/** Rows that violate a check condition (NULL results pass a CHECK, as in SQL). */
+export function checkHoldsCheck(t: { schema?: string; name: string }, c: PhysicalCheck): Check {
+  return { description: `all rows of ${physicalTableRef(t)} satisfy ${c.sql}`, sql: `SELECT 1 FROM ${physicalTableRef(t)} WHERE NOT (${c.sql}) LIMIT 1`, expect: "empty" };
 }
 
 export function tableEmptyCheck(t: { schema?: string; name: string }): Check {

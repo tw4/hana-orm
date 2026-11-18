@@ -316,7 +316,7 @@ async function migrationSql(m: LoadedMigration): Promise<string> {
 export async function migrateShow(args: ParsedArgs, ctx: CliContext): Promise<number> {
   const migrations = await readMigrations(ctx.migrationsDir);
   // Migration ids start with a timestamp; other positionals (e.g. the subcommand) are ignored.
-  const requested = args.positional.filter((p) => /^d/.test(p));
+  const requested = args.positional.filter((p) => /^\d/.test(p));
   const wanted = requested.find((p) => migrations.some((m) => m.id === p || m.id.startsWith(p)));
   if (requested.length && !wanted) {
     ctx.warn(`No migration matches '${requested.join(" ")}'.`);
