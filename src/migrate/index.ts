@@ -21,6 +21,7 @@ export { DB_MIGRATE_HELP, runDbOrMigrateCommand } from "./cli.ts";
 export { dbSeed, resolveSeedCommand, runSeed, runShellCommand } from "./seed.ts";
 export type { SeedCommand } from "./seed.ts";
 export { dropSql, isLocalHost, migrateReset } from "./reset.ts";
+export { findMigration, intermediateHash, migrateSplit, migrateSquash, splitPoints } from "./squash.ts";
 export type { DropTarget } from "./reset.ts";
 export { introspect, buildPhysicalFromCatalog, readCatalog, catalogType, currentSchema, CATALOG_SQL } from "../introspect/catalog.ts";
 export type { CatalogRows, IntrospectOptions } from "../introspect/catalog.ts";

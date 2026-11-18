@@ -56,6 +56,21 @@ export class DatabaseError extends HanaOrmError {
   }
 }
 
+/**
+ * A statement ran longer than `statementTimeout`. Its connection was closed (which also stops
+ * the statement on the server) and is not reused; an open transaction on it is rolled back.
+ */
+export class QueryTimeoutError extends HanaOrmError {
+  readonly sql: string;
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number, sql: string) {
+    super("QUERY_TIMEOUT", `The statement did not finish within statementTimeout (${timeoutMs} ms): ${sql.split("\n")[0]!.slice(0, 200)}`);
+    this.name = "QueryTimeoutError";
+    this.sql = sql;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export type TransactionErrorCode = "TRANSACTION_TIMEOUT" | "TRANSACTION_MAX_WAIT" | "TRANSACTION_CLOSED";
 
 /**

@@ -9,6 +9,7 @@ import type { Contract } from "../schema/contract.ts";
 import { SchemaError } from "../schema/errors.ts";
 import { generateClient } from "../generator/client.ts";
 import { generateTypedSqlModule, parseSqlFile, type DescribingDriver } from "../generator/typed-sql.ts";
+import { DECIMAL_MODES, type DecimalMode } from "../runtime/codec.ts";
 import { loadDotEnv, resolveConnectionConfig, resolveDefaultSchema } from "../runtime/config.ts";
 import { HanaDriver } from "../runtime/hana-driver.ts";
 import type { CliContext, ParsedArgs } from "./context.ts";
@@ -190,7 +191,16 @@ export async function cmdGenerate(ctx: CliContext, args: ParsedArgs): Promise<nu
       mkdirSync(outDir, { recursive: true });
       const file = join(outDir, "index.ts");
       const portable = { ...contract, generators: contract.generators.map(({ output: _o, ...rest }) => rest) } as Contract;
-      writeFileSync(file, generateClient(portable, { ...(typeof g.runtimeImport === "string" ? { runtimeImport: g.runtimeImport } : {}), ...(typeof g.clientName === "string" ? { clientName: g.clientName } : {}) }));
+      if (g.decimal !== undefined && !(DECIMAL_MODES as readonly unknown[]).includes(g.decimal)) {
+        console.error(`generator ${g.name}: decimal must be ${DECIMAL_MODES.map((m) => `"${m}"`).join(", ")}; got ${JSON.stringify(g.decimal)}`);
+        return false;
+      }
+      const source = generateClient(portable, {
+        ...(typeof g.runtimeImport === "string" ? { runtimeImport: g.runtimeImport } : {}),
+        ...(typeof g.clientName === "string" ? { clientName: g.clientName } : {}),
+        ...(g.decimal !== undefined ? { decimal: g.decimal as DecimalMode } : {}),
+      });
+      writeFileSync(file, source);
       ctx.log(`Generated client for ${Object.keys(contract.models).length} model(s) → ${relative(ctx.cwd, file)}`);
     }
     if (args.flags.sql !== undefined) return generateSql(ctx, args, generators.map((g) => ({ outDir: resolve(schemaDir(ctx.schemaPath), String(g.output ?? "./generated/hana")), runtimeImport: typeof g.runtimeImport === "string" ? g.runtimeImport : undefined })));
