@@ -97,6 +97,19 @@ jobs:
             echo "::error::Some integration tests were skipped"; exit 1
           fi
 
+      - name: Benchmarks
+        run: |
+          node bench/hana/run.ts --out bench-results.json --md bench-results.md
+          cat bench-results.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hana-benchmarks
+          path: |
+            bench-results.json
+            bench-results.md
+          retention-days: 90
+
       - name: HANA logs
         if: failure()
         run: docker logs --tail 500 hana-orm-hxe > hana.log 2>&1 || true
