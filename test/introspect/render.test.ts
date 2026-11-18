@@ -216,7 +216,8 @@ test("re-pull keeps config blocks, enums, custom names, relation names and docs"
   assert.ok(src.startsWith("// Shop schema, maintained by hand.\n\ndatasource db {\n  provider = \"hana\"\n  url      = env(\"DATABASE_URL\")   // keep this comment\n}\n\ngenerator client {"));
   assert.match(src, /enum OrderStatus \{\n  OPEN    @map\("open"\)/);
   const client = block(src, "Client");
-  assert.match(client, /^\/\/\/ A shop customer\.\nmodel Client \{/);
+  // `///` is the table comment: the database's comment wins over the old doc
+  assert.match(client, /^\/\/\/ People who order\nmodel Client \{/);
   assert.match(client, /  \/\/\/ Login e-mail\.\n  mail +String +@unique @map\("EMAIL"\) @db\.NVarChar\(255\)/);
   assert.match(client, /  purchases +Orders\[\] +@relation\("Orders_customer"\)/);
   assert.match(client, /  billed +Orders\[\] +@relation\("Orders_billingCustomer"\)/);

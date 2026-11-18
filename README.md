@@ -106,6 +106,39 @@ model Audit {
 - `Unsupported("TYPE")` fields are always hidden from the client. `db pull` keeps `@ignore`
   and `@@ignore` when it updates an existing schema.
 
+#### Check constraints, sequences and comments
+
+```
+/// Customer orders.
+model Order {
+  /// Order number shown to customers.
+  no     Int     @id @default(sequence("ORDER_NO", start: 1000)) @map("NO")
+  total  Decimal @map("TOTAL") @db.Decimal(15, 2)
+  status String  @default("open") @map("STATUS")
+
+  @@check("TOTAL >= 0")
+  @@check("STATUS IN ('open', 'paid')", map: "CK_ORDERS_STATUS")
+  @@map("ORDERS")
+}
+```
+
+- `@@check("SQL")` adds a check constraint with a raw SQL condition (it uses column names, not
+  field names). Without `map:` it is named `CK_<TABLE>_<n>` by its position. Adding one runs a
+  pre-check that fails the migration when existing rows violate it; a changed condition is
+  dropped and re-added. Conditions are compared ignoring case, spacing and outer parentheses.
+- `@default(sequence("NAME", start: 1, increment: 1))` on an `Int` or `BigInt` field creates the
+  sequence in the model's schema. HANA has no sequence column defaults, so the client inserts
+  `"NAME".NEXTVAL` and reads the value back with `CURRVAL`. Several fields may share a sequence
+  when they use the same options. `start` only applies when the sequence is created; a changed
+  `increment` becomes `ALTER SEQUENCE`. `db pull` cannot see which column uses a sequence, so it
+  keeps `sequence()` defaults of an existing schema but does not add new ones.
+- `///` doc comments on models and fields become `COMMENT ON TABLE` / `COMMENT ON COLUMN`, and
+  `db pull` writes table and column comments back as `///`. They do not change the contract
+  hash. In a project whose migrations predate comment support, `migrate status` reports the
+  docs as unplanned changes and the next `migrate plan` creates a migration that sets them;
+  database comments are not reported as drift against those older migrations.
+- Drift checks only look at sequences the schema defines; other sequences are left alone.
+
 ### Queries
 
 ```ts
@@ -319,7 +352,7 @@ npx hana-orm format --check   # CI: exit 1 and list files that are not formatted
 
 `format` aligns field names, types and attributes in columns, orders attributes
 (`@id @default @unique @updatedAt @ignore @relation @map @db.*`, then
-`@@id @@unique @@index @@map @@schema @@ignore`), normalizes spacing and blank lines and keeps
+`@@id @@unique @@index @@check @@map @@schema @@ignore`; `@@check` lines keep their order), normalizes spacing and blank lines and keeps
 all comments. It is idempotent and refuses to touch a file with syntax errors.
 
 A schema can also be a folder: `--schema schema/` (or a `./schema/` folder found by default)

@@ -43,10 +43,15 @@ export interface ContractSnapshot {
   hash: string;
   models: Contract["models"];
   enums: Contract["enums"];
+  /**
+   * The migrations up to this one manage `///` comments as database comments. Snapshots
+   * written before comment support lack it: their docs were never applied to the database.
+   */
+  comments?: true;
 }
 
 export function toSnapshot(contract: Pick<Contract, "hash" | "models" | "enums">): ContractSnapshot {
-  return { version: CONTRACT_VERSION, hash: contract.hash, models: contract.models, enums: contract.enums };
+  return { version: CONTRACT_VERSION, hash: contract.hash, models: contract.models, enums: contract.enums, comments: true };
 }
 
 /** `YYYYMMDDHHmmss` in UTC. */
