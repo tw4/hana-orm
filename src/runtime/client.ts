@@ -7,6 +7,8 @@ import type { Driver, IsolationLevel, QueryEvent, Queryable } from "./driver.ts"
 import { Engine } from "./engine.ts";
 import { NotFoundError, TransactionError, ValidationError } from "./errors.ts";
 import { HanaDriver, type ConnectionConfig } from "./hana-driver.ts";
+import { Prepared } from "./prepared.ts";
+import { PlaceholderSlot } from "./placeholder.ts";
 import { TABLE, type InsertOf } from "./builder/core.ts";
 import { DeleteBuilder, InsertBuilder, SelectStart, UpdateStart, WithStart, type BuilderHost, type Cte, type Selection } from "./builder/query.ts";
 import { decodeTypedRow, type TypedSql } from "./typed-sql.ts";
@@ -179,6 +181,7 @@ export const OPERATIONS = [
 ] as const;
 export type Operation = (typeof OPERATIONS)[number];
 
+const PREPARABLE = new Set<string>(["findMany", "findFirst", "findFirstOrThrow", "findUnique", "findUniqueOrThrow"]);
 const WRITES = new Set<Operation>(["create", "createMany", "createManyAndReturn", "update", "updateMany", "upsert", "delete", "deleteMany"]);
 
 type AnyFn = (...args: any[]) => any;
@@ -277,9 +280,9 @@ export class BaseClient {
 
   /** @internal Runs reads directly and writes in a transaction (unless already inside one). */
   _run<T>(write: boolean, fn: (q: Queryable) => Promise<T>): Promise<T> {
-    if (this._tx) return fn(this._tx);
-    if (!write) return fn(this._driver());
-    return this._driver().transaction(fn);
+    if (this._tx) return fn(guardPlaceholders(this._tx));
+    if (!write) return fn(guardPlaceholders(this._driver()));
+    return this._driver().transaction((q) => fn(guardPlaceholders(q)));
   }
 
   /** @internal */
@@ -320,8 +323,12 @@ export class BaseClient {
         };
       }
       // Lazy: runs when awaited, or inside $transaction([...]) on the transaction client.
-      delegate[op] = (args?: any) =>
-        new QueryPromise((client) => (client ? (client as unknown as Record<string, Record<string, AnyFn>>)[key]![op]!(args) : call(args ?? {})));
+      delegate[op] = (args?: any) => {
+        const qp = new QueryPromise((client) => (client ? (client as unknown as Record<string, Record<string, AnyFn>>)[key]![op]!(args) : call(args ?? {})));
+        // reads can be compiled once and run with placeholder values (query extensions are not applied)
+        if (PREPARABLE.has(op)) Object.defineProperty(qp, "prepare", { value: () => this._prepareRead(model, op, args ?? {}, computed) });
+        return qp;
+      };
     }
     for (const ext of this._extensions) {
       for (const [name, fn] of Object.entries({ ...ext.model?.$allModels, ...ext.model?.[key] })) delegate[name] = fn.bind(delegate);
@@ -371,6 +378,20 @@ export class BaseClient {
         return this._run(true, (q) => (e[op as "create"] as (m: ModelDef, a: any, q: Queryable) => Promise<unknown>).call(e, model, args, q));
       }
     }
+  }
+
+  /** @internal */
+  _prepareRead(model: ModelDef, op: Operation, args: any, computed?: ComputedFields): Prepared<unknown> {
+    const e = this._engine();
+    if (!computed?.size) {
+      const p = e.prepareRead(model, op, args);
+      return new Prepared((write, fn) => this._run(write, fn), false, p.sql, p.placeholders, p.run);
+    }
+    // computed fields: fetch what they need, then compute them on every execution
+    const omitted = e.globalOmit.get(model.name) ?? {};
+    const prepared = prepareArgs(args, computed, new Set(Object.keys(omitted).filter((k) => omitted[k])));
+    const p = e.prepareRead(model, op, prepared.args);
+    return new Prepared((write, fn) => this._run(write, fn), false, p.sql, p.placeholders, async (values, q) => applyComputed(await p.run(values, q), prepared));
   }
 
   /** @internal Clone sharing driver/engine with a different transaction or extensions. */
@@ -608,5 +629,19 @@ export function createClientClass(contract: Contract, config: GeneratedConfig = 
     constructor(options?: ClientOptions) {
       super(contract, options, config);
     }
+  };
+}
+
+/** Refuses statements that still carry placeholders: `placeholder()` belongs in prepared queries. */
+function guardPlaceholders(q: Queryable): Queryable {
+  const check = (params: readonly unknown[] | undefined): void => {
+    if (params?.some((p) => p instanceof PlaceholderSlot)) {
+      throw new ValidationError("placeholder() can only be used in a prepared query: call .prepare() and then .execute({ ... })");
+    }
+  };
+  return {
+    query: (sqlText, params) => (check(params), q.query(sqlText, params)),
+    execute: (sqlText, params) => (check(params), q.execute(sqlText, params)),
+    executeBatch: (sqlText, rows) => (rows.forEach(check), q.executeBatch(sqlText, rows)),
   };
 }

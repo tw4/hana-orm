@@ -4,6 +4,9 @@ export type { Driver, IsolationLevel, Queryable, QueryEvent, TransactionOptions 
 export { DatabaseError, HanaOrmError, NotFoundError, QueryTimeoutError, TransactionError, ValidationError, type TransactionErrorCode } from "./errors.ts";
 export { resolveConnectionConfig, parseHanaUrl } from "./config.ts";
 export type { Contract } from "../schema/contract.ts";
+export { placeholder, Placeholder } from "./placeholder.ts";
+export { Prepared } from "./prepared.ts";
+export type { PlaceholderValues } from "./prepared.ts";
 export { Column, SQL, sql, alias, createTables, TABLE } from "./builder/core.ts";
 export type { Table, RowOf, InferRow, InsertOf, AliasOf } from "./builder/core.ts";
 export { eq, ne, gt, gte, lt, lte, like, notLike, ilike, inArray, notInArray, isNull, isNotNull, between, and, or, not, exists, notExists, asc, desc, count, countDistinct, sum, avg, min, max } from "./builder/ops.ts";

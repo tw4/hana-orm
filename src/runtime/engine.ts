@@ -9,6 +9,8 @@ import {
   type RelationFieldDef,
 } from "../schema/contract.ts";
 import { decodeValue, encodeValue, type DecodeOptions } from "./codec.ts";
+import { fillParams, slotNames, type PlaceholderValues } from "./prepared.ts";
+import { collectPlaceholders, substitutePlaceholders } from "./placeholder.ts";
 import type { Queryable } from "./driver.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
 import { quoteIdent, tableRef } from "./sql.ts";
@@ -196,6 +198,43 @@ export class Engine {
   async findFirst(model: ModelDef, args: Args = {}, q: Queryable): Promise<Row | null> {
     const rows = await this.findMany(model, { ...args, take: args.take === undefined ? 1 : args.take }, q);
     return rows[0] ?? null;
+  }
+
+  /**
+   * Compiles a read once for a prepared query. Without relations to load, executions only fill
+   * the placeholders; with `include` / relation selects the arguments get the values and the
+   * read runs as usual.
+   */
+  prepareRead(model: ModelDef, op: string, args: Args = {}): { sql: string; placeholders: Set<string>; run: (values: PlaceholderValues, q: Queryable) => Promise<unknown> } {
+    let a: Args = args;
+    const unique = op === "findUnique" || op === "findUniqueOrThrow";
+    if (unique) {
+      if (!isPlainObject(args?.where)) throw new ValidationError(`${op} on '${model.name}' needs a 'where' with a unique field`);
+      this.assertUniqueWhere(model, args.where);
+      a = { where: args.where, select: args.select, include: args.include, omit: args.omit };
+    }
+    if (unique || op === "findFirst" || op === "findFirstOrThrow") a = { ...a, take: a.take === undefined ? 1 : a.take };
+    else if (op !== "findMany") throw new ValidationError(`prepare() supports findMany, findFirst(OrThrow) and findUnique(OrThrow), not ${op}`);
+    const built = this.buildSelect(model, a);
+    // nested reads (include) may have placeholders that are not in the top-level SQL
+    const placeholders = collectPlaceholders(a, slotNames(built.params));
+    const reusable = !built.sel.relations.length;
+    const shape = (rows: Row[]): unknown => {
+      if (op === "findMany") return rows;
+      const row = rows[0] ?? null;
+      if (!row && op.endsWith("OrThrow")) throw new NotFoundError(model.name);
+      return row;
+    };
+    return {
+      sql: built.sql,
+      placeholders,
+      run: async (values, q) => {
+        const res = reusable
+          ? await this.execSelect(model, { ...built, params: fillParams(this.contract, built.params, values) }, a, q)
+          : await this.readMany(model, substitutePlaceholders(a, values) as Args, q);
+        return shape(strip(res.rows, res.hidden));
+      },
+    };
   }
 
   async findUnique(model: ModelDef, args: Args, q: Queryable): Promise<Row | null> {

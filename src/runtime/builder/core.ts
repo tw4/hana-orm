@@ -12,6 +12,7 @@ import { columnFields } from "../../schema/contract.ts";
 import { decodeValue, encodeValue, formatTimestamp } from "../codec.ts";
 import { ValidationError } from "../errors.ts";
 import { quoteIdent, tableRef } from "../sql.ts";
+import { Placeholder, PlaceholderSlot } from "../placeholder.ts";
 
 /** What rendering needs from the client. */
 export interface RenderContext {
@@ -48,6 +49,7 @@ export class Param implements Renderable {
 
 /** Driver value for an untyped parameter (same rules as `$queryRaw`). */
 export function rawValue(v: unknown): unknown {
+  if (v instanceof Placeholder) return new PlaceholderSlot(v.name, undefined);
   if (v instanceof Date) return formatTimestamp(v);
   if (typeof v === "bigint") return v.toString();
   return v;

@@ -141,6 +141,9 @@ export interface BatchPayload {
   count: number;
 }
 
+/** A read that can also be compiled once: `db.user.findMany(args).prepare()`. */
+export type PreparableQuery<T> = Promise<T> & { prepare(): import("./prepared.ts").Prepared<T> };
+
 // ---- result extensions (computed fields) ----------------------------------------------
 
 /** `select` / `omit` entries for the computed fields `R`. */

@@ -4,12 +4,13 @@ import type { Contract } from "../../schema/contract.ts";
 import { decodeValue } from "../codec.ts";
 import { ValidationError } from "../errors.ts";
 import { Column, Param, SQL, type Renderable } from "./core.ts";
+import type { Placeholder } from "../placeholder.ts";
 
 /** A column or SQL expression of type `T`. */
 export type Expr<T> = Column<T, string> | SQL<T>;
 
 /** The right side of a comparison: a value of the column's type, another column or an expression. */
-export type Operand<T> = NonNullable<T> | Column<T, string> | Column<T | null, string> | SQL<T> | SQL<unknown>;
+export type Operand<T> = NonNullable<T> | Placeholder | Column<T, string> | Column<T | null, string> | SQL<T> | SQL<unknown>;
 
 const operand = (left: Expr<unknown>, v: unknown): Renderable =>
   v instanceof Column || v instanceof SQL || (typeof v === "object" && v !== null && typeof (v as Renderable).render === "function")
@@ -28,14 +29,14 @@ export const gte = cmp(">=");
 export const lt = cmp("<");
 export const lte = cmp("<=");
 
-export function like(left: Expr<string | null>, pattern: string | SQL<unknown>): SQL<boolean> {
+export function like(left: Expr<string | null>, pattern: string | Placeholder | SQL<unknown>): SQL<boolean> {
   return new SQL<boolean>([left, " LIKE ", operand(left, pattern)]);
 }
-export function notLike(left: Expr<string | null>, pattern: string | SQL<unknown>): SQL<boolean> {
+export function notLike(left: Expr<string | null>, pattern: string | Placeholder | SQL<unknown>): SQL<boolean> {
   return new SQL<boolean>([left, " NOT LIKE ", operand(left, pattern)]);
 }
 /** Case-insensitive LIKE: `LOWER(x) LIKE LOWER(?)`. */
-export function ilike(left: Expr<string | null>, pattern: string | SQL<unknown>): SQL<boolean> {
+export function ilike(left: Expr<string | null>, pattern: string | Placeholder | SQL<unknown>): SQL<boolean> {
   return new SQL<boolean>(["LOWER(", left, ") LIKE LOWER(", operand(left, pattern), ")"]);
 }
 
@@ -57,8 +58,8 @@ function inList<T>(left: Expr<T>, values: readonly NonNullable<T>[] | SubqueryLi
   chunks.push(")");
   return new SQL<boolean>(chunks);
 }
-export const inArray = <T>(left: Expr<T>, values: readonly NonNullable<T>[] | SubqueryLike): SQL<boolean> => inList(left, values, false);
-export const notInArray = <T>(left: Expr<T>, values: readonly NonNullable<T>[] | SubqueryLike): SQL<boolean> => inList(left, values, true);
+export const inArray = <T>(left: Expr<T>, values: readonly (NonNullable<T> | Placeholder)[] | SubqueryLike): SQL<boolean> => inList(left, values as never, false);
+export const notInArray = <T>(left: Expr<T>, values: readonly (NonNullable<T> | Placeholder)[] | SubqueryLike): SQL<boolean> => inList(left, values as never, true);
 
 export const isNull = (e: Expr<unknown>): SQL<boolean> => new SQL<boolean>([e, " IS NULL"]);
 export const isNotNull = (e: Expr<unknown>): SQL<boolean> => new SQL<boolean>([e, " IS NOT NULL"]);

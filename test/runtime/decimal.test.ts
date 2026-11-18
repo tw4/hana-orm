@@ -51,7 +51,7 @@ test("the generator types Decimal fields per mode and bakes the mode into the cl
 
   const num = generateClient(c, { decimal: "number" });
   assert.match(num, /amount: number;/);
-  assert.match(num, /amount\?: number \| string \| \$r\.Filter<number \| string>;/);
+  assert.match(num, /amount\?: number \| string \| \$r\.Placeholder \| \$r\.Filter<number \| string \| \$r\.Placeholder>;/);
   assert.match(num, /\$r\.createClientClass\(contract, \{ decimal: "number" \}\)/);
 
   const dj = generateClient(c, { decimal: "decimal.js" });
