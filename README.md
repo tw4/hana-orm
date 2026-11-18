@@ -199,6 +199,30 @@ Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `ag
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
 
+#### Json filters
+
+```ts
+await db.event.findMany({
+  where: {
+    payload: { path: ["user", "country"], equals: "DE" },        // JSON_VALUE(...) = ?
+    meta: { path: "$.score", gte: 0.5 },                          // JSON_VALUE(... RETURNING DOUBLE)
+    tags: { array_contains: ["urgent", 3] },                     // the array has both elements
+  },
+});
+```
+
+- `path` is an array of keys and indexes (`["items", 0, "sku"]`) or a JSON path (`"$.items[0].sku"`).
+  Without it the operators apply to the whole document.
+- `equals` / `not` / `lt` / `lte` / `gt` / `gte` with a path compare a scalar: numbers as numbers,
+  booleans as `true`/`false`; `equals: null` matches JSON null and a missing key. Without a path,
+  `equals` compares the stored JSON text, so it only finds documents written in the same form
+  (hana-orm writes compact `JSON.stringify` output).
+- `string_contains` / `string_starts_with` / `string_ends_with` match the string at the path
+  (`mode: "insensitive"` is supported).
+- `array_contains` (an element or a list of elements, all required), `array_starts_with` and
+  `array_ends_with` take scalar elements. They match the array's JSON text, so an element of a
+  nested array can also match.
+
 #### Connection pool
 
 ```ts
