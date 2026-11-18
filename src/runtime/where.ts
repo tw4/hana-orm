@@ -84,17 +84,40 @@ export function compoundKey(model: ModelDef, key: string): string[] | undefined 
   return model.uniques.find((u) => u.fields.length > 1 && u.name === key)?.fields;
 }
 
-const FILTER_KEYS = new Set(["equals", "not", "in", "notIn", "lt", "lte", "gt", "gte", "contains", "startsWith", "endsWith", "mode"]);
+const JSON_FILTER_KEYS = new Set([
+  "path",
+  "equals",
+  "not",
+  "lt",
+  "lte",
+  "gt",
+  "gte",
+  "string_contains",
+  "string_starts_with",
+  "string_ends_with",
+  "mode",
+  "array_contains",
+  "array_starts_with",
+  "array_ends_with",
+]);
+
+const isJsonField = (field: ColumnFieldDef): boolean => field.kind === "scalar" && field.type === "Json";
 
 function isFilterObject(field: ColumnFieldDef, value: unknown): value is AnyRecord {
   if (!isPlainObject(value)) return false;
-  if (field.kind === "scalar" && field.type === "Json") return Object.keys(value).every((k) => FILTER_KEYS.has(k));
+  // a Json value may itself be an object: it is a filter only when every key is a filter key
+  if (isJsonField(field)) return Object.keys(value).length > 0 && Object.keys(value).every((k) => JSON_FILTER_KEYS.has(k));
   return true;
 }
 
 export function scalarCondition(engine: Engine, field: ColumnFieldDef, col: string, filter: unknown, ctx: SqlContext): string | null {
   const enc = (v: unknown) => encodeValue(engine.contract, field, v);
   if (filter === null) return `${col} IS NULL`;
+  if (isJsonField(field)) {
+    if (isFilterObject(field, filter)) return jsonCondition(engine, field, col, filter, ctx);
+    // HANA cannot compare an NCLOB with '='; compare the stored text
+    return `TO_NVARCHAR(${col}) = ${ctx.bind(enc(filter))}`;
+  }
   if (!isFilterObject(field, filter)) return `${col} = ${ctx.bind(enc(filter))}`;
 
   const insensitive = filter.mode === "insensitive";
@@ -142,6 +165,118 @@ export function scalarCondition(engine: Engine, field: ColumnFieldDef, col: stri
       }
       default:
         throw new ValidationError(`Unknown filter '${op}' on field '${field.name}'`);
+    }
+  }
+  if (!parts.length) return null;
+  return parts.length === 1 ? parts[0]! : parts.map(paren).join(" AND ");
+}
+
+// ---- Json ------------------------------------------------------------------------
+
+/**
+ * JSON path literal for `JSON_VALUE` / `JSON_QUERY` (HANA takes the path only as a literal).
+ * `["a", 0, "my key"]` → `$.a[0]."my key"`; a string must already be a path starting with `$`.
+ */
+export function jsonPath(path: unknown, fieldName: string): string {
+  if (path === undefined) return "$";
+  if (typeof path === "string") {
+    if (!/^\$(\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\]|\."(?:[^"\\]|\\.)*")*$/.test(path)) {
+      throw new ValidationError(`Invalid JSON path '${path}' on field '${fieldName}'; use e.g. "$.address.city", "$.tags[0]" or an array of keys`);
+    }
+    return path;
+  }
+  if (!Array.isArray(path)) throw new ValidationError(`'path' on field '${fieldName}' must be a string or an array of keys`);
+  let out = "$";
+  for (const seg of path) {
+    if (typeof seg === "number" && Number.isInteger(seg) && seg >= 0) out += `[${seg}]`;
+    else if (typeof seg === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(seg)) out += `.${seg}`;
+    else if (typeof seg === "string") out += `."${seg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    else throw new ValidationError(`Invalid path segment ${JSON.stringify(seg)} on field '${fieldName}'`);
+  }
+  return out;
+}
+
+const sqlLiteral = (s: string): string => `'${s.replace(/'/g, "''")}'`;
+
+function isJsonScalar(v: unknown): v is string | number | boolean | null {
+  return v === null || typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+}
+
+/** Regex source matching `value` as compact JSON text (`"a"`, `1`, `true`, `null`). */
+export function jsonScalarRegex(v: string | number | boolean | null): string {
+  return JSON.stringify(v).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function jsonCondition(engine: Engine, field: ColumnFieldDef, col: string, filter: AnyRecord, ctx: SqlContext): string | null {
+  const name = field.name;
+  const path = sqlLiteral(jsonPath(filter.path, name));
+  const value = `JSON_VALUE(${col}, ${path})`;
+  const number = `JSON_VALUE(${col}, ${path} RETURNING DOUBLE)`;
+  const query = `JSON_QUERY(${col}, ${path})`;
+  const hasPath = filter.path !== undefined;
+  const insensitive = filter.mode === "insensitive";
+  const parts: string[] = [];
+
+  /** `JSON_VALUE` comparison of a scalar; numbers compare as numbers, booleans as `true`/`false`. */
+  const compare = (op: string, v: unknown, key: string): string => {
+    if (v === null) {
+      if (op !== "=") throw new ValidationError(`'${key}' on field '${name}' cannot compare with null`);
+      return `${value} IS NULL`;
+    }
+    if (typeof v === "number" && Number.isFinite(v)) return `${number} ${op} ${ctx.bind(v)}`;
+    if (typeof v === "string") return `${value} ${op} ${ctx.bind(v)}`;
+    if (typeof v === "boolean" && op === "=") return `${value} = ${ctx.bind(v ? "true" : "false")}`;
+    throw new ValidationError(`'${key}' on field '${name}' with a path compares a string, number${op === "=" ? ", boolean" : ""} or null, got ${JSON.stringify(v)}`);
+  };
+  const like = (pattern: string): string =>
+    insensitive ? `LOWER(${value}) LIKE LOWER(${ctx.bind(pattern)}) ESCAPE '\\'` : `${value} LIKE ${ctx.bind(pattern)} ESCAPE '\\'`;
+  const element = (v: unknown, key: string): string => {
+    if (!isJsonScalar(v)) throw new ValidationError(`'${key}' on field '${name}' takes strings, numbers, booleans or null, got ${JSON.stringify(v)}`);
+    return jsonScalarRegex(v);
+  };
+
+  for (const [op, v] of Object.entries(filter)) {
+    if (v === undefined || op === "path" || op === "mode") continue;
+    switch (op) {
+      case "equals":
+      case "not": {
+        let cond: string;
+        if (!hasPath) {
+          // the whole document, compared as the stored (compact) JSON text
+          cond = v === null ? `${col} IS NULL` : `TO_NVARCHAR(${col}) = ${ctx.bind(encodeValue(engine.contract, field, v))}`;
+        } else cond = compare("=", v, op);
+        parts.push(op === "equals" ? cond : `NOT (${cond})`);
+        break;
+      }
+      case "lt":
+      case "lte":
+      case "gt":
+      case "gte":
+        parts.push(compare({ lt: "<", lte: "<=", gt: ">", gte: ">=" }[op], v, op));
+        break;
+      case "string_contains":
+      case "string_starts_with":
+      case "string_ends_with": {
+        if (typeof v !== "string") throw new ValidationError(`'${op}' on field '${name}' expects a string`);
+        const e = escapeLike(v);
+        parts.push(like(op === "string_contains" ? `%${e}%` : op === "string_starts_with" ? `${e}%` : `%${e}`));
+        break;
+      }
+      case "array_contains": {
+        const items = Array.isArray(v) ? v : [v];
+        // JSON_QUERY returns the array text; it is NULL when the value there is a scalar
+        parts.push(`${query} LIKE '[%'`);
+        for (const item of items) parts.push(`${query} LIKE_REGEXPR ${ctx.bind(`^\\[(.*,)?\\s*${element(item, op)}\\s*(,.*)?\\]$`)} FLAG 's'`);
+        break;
+      }
+      case "array_starts_with":
+        parts.push(`${query} LIKE_REGEXPR ${ctx.bind(`^\\[\\s*${element(v, op)}\\s*[,\\]]`)} FLAG 's'`);
+        break;
+      case "array_ends_with":
+        parts.push(`${query} LIKE_REGEXPR ${ctx.bind(`[\\[,]\\s*${element(v, op)}\\s*\\]$`)} FLAG 's'`);
+        break;
+      default:
+        throw new ValidationError(`Unknown filter '${op}' on Json field '${name}'`);
     }
   }
   if (!parts.length) return null;
