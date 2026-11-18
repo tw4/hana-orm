@@ -1,0 +1,69 @@
+{
+  "name": "hana-orm-vscode",
+  "displayName": "hana-orm",
+  "description": "Syntax highlighting, formatting, diagnostics, go to definition and completion for hana-orm .hana schema files",
+  "version": "0.1.0",
+  "publisher": "hana-orm",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tw4/hana-orm.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "hana",
+    "sap hana",
+    "orm",
+    "schema"
+  ],
+  "type": "module",
+  "main": "./out/extension.cjs",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "hana",
+        "aliases": [
+          "hana-orm schema",
+          "hana"
+        ],
+        "extensions": [
+          ".hana"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hana",
+        "scopeName": "source.hana",
+        "path": "./syntaxes/hana.tmLanguage.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[hana]": {
+        "editor.defaultFormatter": "hana-orm.hana-orm-vscode",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outfile=out/extension.cjs",
+    "package": "npm run build && vsce package --no-dependencies",
+    "publish": "npm run build && vsce publish --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0"
+  }
+}
