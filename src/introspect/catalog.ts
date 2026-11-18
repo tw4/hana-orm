@@ -1,6 +1,7 @@
 /**
  * Reads the HANA catalog (SYS.TABLES, SYS.TABLE_COLUMNS, SYS.CONSTRAINTS,
- * SYS.REFERENTIAL_CONSTRAINTS, SYS.INDEXES/SYS.INDEX_COLUMNS, SYS.VIEWS/SYS.VIEW_COLUMNS)
+ * SYS.REFERENTIAL_CONSTRAINTS, SYS.INDEXES/SYS.INDEX_COLUMNS, SYS.VIEWS/SYS.VIEW_COLUMNS,
+ * SYS.SEQUENCES)
  * into a `PhysicalSchema`. Each catalog view is read once per schema and filtered in memory,
  * which keeps the number of round trips constant for schemas with hundreds of tables.
  *
@@ -11,7 +12,7 @@
 
 import type { Queryable } from "../runtime/driver.ts";
 import { HOUSEKEEPING_TABLES } from "../migrate/history.ts";
-import type { FkAction, PhysicalColumn, PhysicalSchema, PhysicalTable, PhysicalView } from "../migrate/physical.ts";
+import type { FkAction, PhysicalColumn, PhysicalSchema, PhysicalSequence, PhysicalTable, PhysicalView } from "../migrate/physical.ts";
 import { tableKey } from "../migrate/physical.ts";
 import { catalogDefaultToSql, formatType } from "../migrate/types.ts";
 
@@ -30,6 +31,19 @@ export interface CatalogColumnRow {
   IS_NULLABLE: string;
   DEFAULT_VALUE: string | null;
   GENERATION_TYPE?: string | null;
+  COMMENTS?: string | null;
+}
+
+export interface CatalogCheckRow {
+  TABLE_NAME: string;
+  CONSTRAINT_NAME: string;
+  CHECK_CONDITION: string;
+}
+
+export interface CatalogSequenceRow {
+  SEQUENCE_NAME: string;
+  START_NUMBER?: number | string | null;
+  INCREMENT_BY?: number | string | null;
 }
 
 export interface CatalogConstraintRow {
@@ -87,6 +101,8 @@ export interface CatalogRows {
   foreignKeys: CatalogFkRow[];
   indexes: CatalogIndexRow[];
   fulltext?: CatalogFulltextRow[];
+  checks?: CatalogCheckRow[];
+  sequences?: CatalogSequenceRow[];
   views?: CatalogViewRow[];
   viewColumns?: CatalogViewColumnRow[];
 }
@@ -95,7 +111,7 @@ export const CATALOG_SQL = {
   tables:
     "SELECT TABLE_NAME, COMMENTS FROM SYS.TABLES WHERE SCHEMA_NAME = ? AND IS_TEMPORARY = 'FALSE' AND IS_USER_DEFINED_TYPE = 'FALSE' ORDER BY TABLE_NAME",
   columns:
-    "SELECT TABLE_NAME, COLUMN_NAME, POSITION, DATA_TYPE_NAME, LENGTH, SCALE, IS_NULLABLE, DEFAULT_VALUE, GENERATION_TYPE " +
+    "SELECT TABLE_NAME, COLUMN_NAME, POSITION, DATA_TYPE_NAME, LENGTH, SCALE, IS_NULLABLE, DEFAULT_VALUE, GENERATION_TYPE, COMMENTS " +
     "FROM SYS.TABLE_COLUMNS WHERE SCHEMA_NAME = ? ORDER BY TABLE_NAME, POSITION",
   constraints:
     "SELECT TABLE_NAME, CONSTRAINT_NAME, COLUMN_NAME, POSITION, IS_PRIMARY_KEY, IS_UNIQUE_KEY " +
@@ -108,12 +124,18 @@ export const CATALOG_SQL = {
     "JOIN SYS.INDEX_COLUMNS c ON c.INDEX_OID = i.INDEX_OID " +
     "WHERE i.SCHEMA_NAME = ? AND i.CONSTRAINT IS NULL ORDER BY i.TABLE_NAME, i.INDEX_NAME, c.POSITION",
   fulltext: "SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME FROM SYS.FULLTEXT_INDEXES WHERE SCHEMA_NAME = ? ORDER BY TABLE_NAME, INDEX_NAME",
+  checks:
+    "SELECT DISTINCT TABLE_NAME, CONSTRAINT_NAME, CHECK_CONDITION FROM SYS.CONSTRAINTS " +
+    "WHERE SCHEMA_NAME = ? AND CHECK_CONDITION IS NOT NULL ORDER BY TABLE_NAME, CONSTRAINT_NAME",
+  // identity columns own system sequences (_SYS_SEQUENCE_...); they are skipped when building
+  sequences:
+    "SELECT SEQUENCE_NAME, START_NUMBER, INCREMENT_BY FROM SYS.SEQUENCES WHERE SCHEMA_NAME = ? ORDER BY SEQUENCE_NAME",
   views: "SELECT VIEW_NAME FROM SYS.VIEWS WHERE SCHEMA_NAME = ? ORDER BY VIEW_NAME",
   viewColumns:
     "SELECT VIEW_NAME, COLUMN_NAME, POSITION, DATA_TYPE_NAME, LENGTH, SCALE, IS_NULLABLE FROM SYS.VIEW_COLUMNS WHERE SCHEMA_NAME = ? ORDER BY VIEW_NAME, POSITION",
 } as const;
 
-export async function readCatalog(db: Queryable, schema: string, includeViews: boolean): Promise<CatalogRows> {
+export async function readCatalog(db: Queryable, schema: string, includeViews: boolean, includeSequences = true): Promise<CatalogRows> {
   const p = [schema];
   const rows: CatalogRows = {
     tables: await db.query<CatalogTableRow>(CATALOG_SQL.tables, p),
@@ -122,7 +144,9 @@ export async function readCatalog(db: Queryable, schema: string, includeViews: b
     foreignKeys: await db.query<CatalogFkRow>(CATALOG_SQL.foreignKeys, p),
     indexes: await db.query<CatalogIndexRow>(CATALOG_SQL.indexes, p),
     fulltext: await db.query<CatalogFulltextRow>(CATALOG_SQL.fulltext, p),
+    checks: await db.query<CatalogCheckRow>(CATALOG_SQL.checks, p),
   };
+  if (includeSequences) rows.sequences = await db.query<CatalogSequenceRow>(CATALOG_SQL.sequences, p);
   if (includeViews) {
     rows.views = await db.query<CatalogViewRow>(CATALOG_SQL.views, p);
     rows.viewColumns = await db.query<CatalogViewColumnRow>(CATALOG_SQL.viewColumns, p);
@@ -153,6 +177,8 @@ export interface BuildOptions {
   defaultSchema: string;
   /** Keeps a table or view when it returns true (receives the database name). */
   filter?: (name: string) => boolean;
+  /** Keeps a sequence when it returns true (receives the database name); default: all. */
+  sequenceFilter?: (name: string) => boolean;
 }
 
 function groupBy<T>(rows: readonly T[], key: (r: T) => string): Map<string, T[]> {
@@ -177,12 +203,14 @@ export function buildPhysicalFromCatalog(rows: CatalogRows, options: BuildOption
   const fks = groupBy(rows.foreignKeys, (r) => r.TABLE_NAME);
   const indexes = groupBy(rows.indexes, (r) => r.TABLE_NAME);
   const fulltext = groupBy(rows.fulltext ?? [], (r) => r.TABLE_NAME);
+  const checks = groupBy(rows.checks ?? [], (r) => r.TABLE_NAME);
 
   for (const t of rows.tables) {
     if (!keep(t.TABLE_NAME)) continue;
     const cols: PhysicalColumn[] = (columns.get(t.TABLE_NAME) ?? []).sort(byPos).map((c) => {
       const type = catalogType(c.DATA_TYPE_NAME, c.LENGTH, c.SCALE);
       const col: PhysicalColumn = { name: c.COLUMN_NAME, type, nullable: c.IS_NULLABLE === "TRUE" };
+      if (c.COMMENTS) col.comment = c.COMMENTS;
       const identity = (c.GENERATION_TYPE ?? "").toUpperCase().includes("IDENTITY");
       if (identity) col.identity = true;
       else {
@@ -222,7 +250,22 @@ export function buildPhysicalFromCatalog(rows: CatalogRows, options: BuildOption
         onUpdate: fkAction(first.UPDATE_RULE),
       });
     }
+    const seen = new Set<string>();
+    for (const c of checks.get(t.TABLE_NAME) ?? []) {
+      if (seen.has(c.CONSTRAINT_NAME)) continue;
+      seen.add(c.CONSTRAINT_NAME);
+      (table.checks ??= []).push({ name: c.CONSTRAINT_NAME, sql: c.CHECK_CONDITION });
+    }
     into.tables[tableKey(schema, t.TABLE_NAME)] = table;
+  }
+
+  for (const r of rows.sequences ?? []) {
+    if (r.SEQUENCE_NAME.startsWith("_SYS_") || (options.sequenceFilter && !options.sequenceFilter(r.SEQUENCE_NAME))) continue;
+    const seq: PhysicalSequence = { name: r.SEQUENCE_NAME };
+    if (schema) seq.schema = schema;
+    if (r.START_NUMBER !== null && r.START_NUMBER !== undefined) seq.start = Number(r.START_NUMBER);
+    if (r.INCREMENT_BY !== null && r.INCREMENT_BY !== undefined) seq.increment = Number(r.INCREMENT_BY);
+    (into.sequences ??= {})[tableKey(schema, r.SEQUENCE_NAME)] = seq;
   }
 
   if (rows.views) {
@@ -253,6 +296,11 @@ export interface IntrospectOptions {
   filter?: (name: string) => boolean;
   /** Restrict to these table keys (relative to the default schema). Used for drift checks. */
   onlyTables?: ReadonlySet<string>;
+  /**
+   * Restrict to these sequence keys. When `onlyTables` is set and this is not, no sequences
+   * are read (a drift check of some tables says nothing about sequences).
+   */
+  onlySequences?: ReadonlySet<string>;
   views?: boolean;
 }
 
@@ -267,11 +315,14 @@ export async function introspect(db: Queryable, options: IntrospectOptions = {})
   const schemas = [...new Set(options.schemas?.length ? options.schemas : [defaultSchema])].sort();
   const out: PhysicalSchema = { tables: {} };
   for (const schema of schemas) {
-    const rows = await readCatalog(db, schema, options.views ?? false);
+    const onlySeq = options.onlySequences;
+    const withSequences = onlySeq ? onlySeq.size > 0 : !options.onlyTables;
+    const rows = await readCatalog(db, schema, options.views ?? false, withSequences);
     const only = options.onlyTables;
-    const filter = (name: string): boolean =>
-      (options.filter ? options.filter(name) : true) && (only ? only.has(tableKey(schema === defaultSchema ? undefined : schema, name)) : true);
-    buildPhysicalFromCatalog(rows, { schema, defaultSchema, filter }, out);
+    const key = (name: string): string => tableKey(schema === defaultSchema ? undefined : schema, name);
+    const filter = (name: string): boolean => (options.filter ? options.filter(name) : true) && (only ? only.has(key(name)) : true);
+    const sequenceFilter = (name: string): boolean => (onlySeq ? onlySeq.has(key(name)) : true);
+    buildPhysicalFromCatalog(rows, { schema, defaultSchema, filter, sequenceFilter }, out);
   }
   return out;
 }

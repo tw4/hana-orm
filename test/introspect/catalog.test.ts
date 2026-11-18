@@ -76,5 +76,5 @@ test("introspect binds the schema as a parameter and restricts to onlyTables", a
   const p = await introspect(d, { onlyTables: new Set(["ORDERS"]) });
   assert.deepEqual(Object.keys(p.tables), ["ORDERS"]);
   assert.ok(seen.slice(1).every(([sql, params]) => params[0] === "SHOP" && sql.includes("SCHEMA_NAME = ?")));
-  assert.equal(seen.length, 7, "one query per catalog view (with full-text indexes), no views without --views");
+  assert.equal(seen.length, 8, "one query per catalog view (with checks and full-text indexes); no views without --views, no sequences for a table-restricted read");
 });

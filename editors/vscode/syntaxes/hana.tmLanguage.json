@@ -1,0 +1,106 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "hana-orm schema",
+  "scopeName": "source.hana",
+  "fileTypes": ["hana"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#config-block" },
+    { "include": "#model-block" },
+    { "include": "#enum-block" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.block.documentation.hana", "match": "///.*$" },
+        { "name": "comment.line.double-slash.hana", "match": "//.*$" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.hana",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.hana", "match": "\\\\." }]
+    },
+    "numbers": { "name": "constant.numeric.hana", "match": "-?\\b\\d+(\\.\\d+)?\\b" },
+    "booleans": { "name": "constant.language.boolean.hana", "match": "\\b(true|false)\\b" },
+    "functions": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": { "1": { "name": "support.function.hana" } }
+    },
+    "values": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#booleans" },
+        { "include": "#functions" },
+        { "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(:)", "captures": { "1": { "name": "variable.parameter.hana" }, "2": { "name": "punctuation.separator.key-value.hana" } } },
+        { "name": "variable.other.constant.hana", "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b" }
+      ]
+    },
+    "attribute": {
+      "begin": "(@@?)([A-Za-z_][A-Za-z0-9_.]*)",
+      "beginCaptures": { "1": { "name": "punctuation.definition.attribute.hana" }, "2": { "name": "entity.other.attribute-name.hana" } },
+      "end": "(?=\\s@|\\s*$|\\s*//)",
+      "patterns": [
+        {
+          "begin": "\\(",
+          "end": "\\)",
+          "beginCaptures": { "0": { "name": "punctuation.section.arguments.begin.hana" } },
+          "endCaptures": { "0": { "name": "punctuation.section.arguments.end.hana" } },
+          "patterns": [{ "include": "#arguments" }]
+        }
+      ]
+    },
+    "arguments": {
+      "patterns": [
+        { "begin": "\\(", "end": "\\)", "patterns": [{ "include": "#arguments" }] },
+        { "begin": "\\[", "end": "\\]", "patterns": [{ "include": "#values" }] },
+        { "include": "#values" }
+      ]
+    },
+    "config-block": {
+      "begin": "^\\s*(datasource|generator)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
+      "beginCaptures": { "1": { "name": "storage.type.hana" }, "2": { "name": "entity.name.section.hana" }, "3": { "name": "punctuation.section.block.begin.hana" } },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.block.end.hana" } },
+      "patterns": [
+        { "include": "#comments" },
+        {
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(=)",
+          "captures": { "1": { "name": "variable.other.property.hana" }, "2": { "name": "keyword.operator.assignment.hana" } }
+        },
+        { "include": "#values" }
+      ]
+    },
+    "model-block": {
+      "begin": "^\\s*(model|view)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
+      "beginCaptures": { "1": { "name": "storage.type.hana" }, "2": { "name": "entity.name.type.class.hana" }, "3": { "name": "punctuation.section.block.begin.hana" } },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.block.end.hana" } },
+      "patterns": [{ "include": "#comments" }, { "include": "#attribute" }, { "include": "#field" }]
+    },
+    "field": {
+      "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s+((String|Int|BigInt|Float|Decimal|Boolean|DateTime|Bytes|Json|Unsupported)|([A-Za-z_][A-Za-z0-9_]*))(\\[\\])?(\\?)?",
+      "captures": {
+        "1": { "name": "variable.other.property.hana" },
+        "3": { "name": "support.type.primitive.hana" },
+        "4": { "name": "entity.name.type.hana" },
+        "5": { "name": "keyword.operator.list.hana" },
+        "6": { "name": "keyword.operator.optional.hana" }
+      }
+    },
+    "enum-block": {
+      "begin": "^\\s*(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
+      "beginCaptures": { "1": { "name": "storage.type.hana" }, "2": { "name": "entity.name.type.enum.hana" }, "3": { "name": "punctuation.section.block.begin.hana" } },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.block.end.hana" } },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#attribute" },
+        { "name": "variable.other.enummember.hana", "match": "^\\s*[A-Za-z_][A-Za-z0-9_]*" }
+      ]
+    }
+  }
+}
