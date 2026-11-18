@@ -323,8 +323,36 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   out.push(`/** Client-wide \`omit\` option: fields left out of every result of a model unless a query asks for them. */`);
   out.push(`export type ${C}OmitConfig = { ${models.map((m) => `${lowerFirst(m.name)}?: ${m.name}Omit`).join("; ")} };`);
   out.push(`export interface ${C}Options extends $r.ClientOptions { omit?: ${C}OmitConfig }`, "");
+  // SQL-like query builder: typed tables and the builder methods (skipped when a model has the name)
+  out.push(`/** Tables for the SQL-like builder: \`db.select().from(tables.user)\`. */`);
+  out.push(`export const tables = $r.createTables(contract) as unknown as {`);
+  for (const m of models) {
+    const key = lowerFirst(m.name);
+    const cols = columnFields(m).map((f) => `readonly ${f.name}: $r.Column<${outputType(contract, f)}${f.optional ? " | null" : ""}, "${key}">`);
+    out.push(`  readonly ${key}: $r.Table<"${key}", { ${cols.join("; ")} }, ${m.kind === "view" ? "never" : `${m.name}CreateManyInput`}>;`);
+  }
+  out.push("};");
+  out.push(
+    `export { sql, alias, eq, ne, gt, gte, lt, lte, like, notLike, ilike, inArray, notInArray, isNull, isNotNull, between, and, or, not, exists, notExists, asc, desc, count, countDistinct, sum, avg, min, max } from "${runtime}";`,
+    "",
+  );
+  const taken = new Set(models.map((m) => lowerFirst(m.name)));
+  const builderMethods: string[] = [];
+  const add = (name: string, ...lines: string[]) => {
+    if (!taken.has(name)) builderMethods.push(...lines);
+  };
+  const anyTable = "{ readonly [$r.TABLE]: unknown }";
+  add("select", `  select(): $r.SelectStart<"all">;`, `  select<S extends $r.Selection>(fields: S): $r.SelectStart<S>;`);
+  add("selectDistinct", `  selectDistinct(): $r.SelectStart<"all">;`, `  selectDistinct<S extends $r.Selection>(fields: S): $r.SelectStart<S>;`);
+  add("insert", `  insert<T extends ${anyTable}>(table: T): $r.InsertBuilder<$r.InsertOf<T>>;`);
+  add("update", `  update<T extends ${anyTable}>(table: T): $r.UpdateStart<T>;`);
+  add("delete", `  delete<T extends ${anyTable}>(table: T): $r.DeleteBuilder;`);
+  add("with", `  with(...ctes: $r.Cte<string, Record<string, unknown>>[]): { select(): $r.SelectStart<"all">; select<S extends $r.Selection>(fields: S): $r.SelectStart<S>; selectDistinct<S extends $r.Selection>(fields?: S): $r.SelectStart<S | "all"> };`);
+  builderMethods.push(`  $with<A extends string>(name: A): $r.WithStart<A>;`);
+
   out.push(`export interface ${C}Transaction<G = {}> {`);
   for (const m of models) out.push(`  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G>;`);
+  out.push(...builderMethods);
   out.push(`  $queryRaw<T = Record<string, unknown>>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T[]>;`);
   out.push(`  $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number>;`);
   out.push(`  $queryRawUnsafe<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;`);

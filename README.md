@@ -421,6 +421,47 @@ const [post, count] = await db.$transaction([
 - Model and raw query methods are lazy: they run when awaited, so an un-awaited
   `db.user.create(...)` does nothing.
 
+### SQL-like query builder
+
+Next to the object API, the generated client exports typed `tables` and operators for queries
+written the way SQL reads:
+
+```ts
+import { HanaClient, tables, eq, and, gt, desc, count, sql, alias } from "./generated/hana/index.ts";
+const { user, post } = tables;
+
+const rows = await db
+  .select({ email: user.email, title: post.title })      // { email: string; title: string | null }[]
+  .from(user)
+  .leftJoin(post, eq(post.authorId, user.id))
+  .where(and(eq(user.active, true), gt(user.visits, 10n)))
+  .orderBy(desc(user.createdAt))
+  .limit(20);
+
+const perAuthor = await db
+  .select({ authorId: post.authorId, posts: count() })
+  .from(post)
+  .groupBy(post.authorId)
+  .having(gt(count(), 5));
+
+await db.update(user).set({ visits: sql`${user.visits} + 1` }).where(eq(user.id, 1)); // row count
+await db.delete(post).where(eq(post.published, false));
+await db.insert(user).values([{ email: "a@example.com" }]); // same defaults as createMany
+```
+
+- `select()` without fields returns whole rows; with joins, one nested row per table
+  (`{ user: {...}, post: {...} | null }`). Columns of outer-joined tables are typed `| null`.
+- Operators: `eq ne gt gte lt lte like notLike ilike inArray notInArray isNull isNotNull between
+  and or not exists notExists`, `asc`/`desc`, aggregates `count countDistinct sum avg min max`.
+  Values are bound and encoded with the column's codec (enums, dates, bigints, decimals).
+- `` sql`…` `` embeds SQL: columns render as identifiers, everything else is bound;
+  `.mapWith(fn)` decodes the value.
+- `alias(tables.user, "author")` for self-joins; `.as("name")` turns a select into a subquery
+  for `from`/`join`; `db.$with("name").as(query)` and `db.with(cte).select()…` write a `WITH`.
+- `.toSQL()` returns the statement and parameters without running it. Builders share the
+  driver, codecs and transactions of the client (`tx.select()` inside `$transaction`).
+- HANA has no `RETURNING`, so `insert`/`update`/`delete` resolve with the affected row count.
+
 ### Migrations
 
 ```sh

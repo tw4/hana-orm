@@ -4,6 +4,12 @@ export type { Driver, IsolationLevel, Queryable, QueryEvent, TransactionOptions 
 export { DatabaseError, HanaOrmError, NotFoundError, QueryTimeoutError, TransactionError, ValidationError, type TransactionErrorCode } from "./errors.ts";
 export { resolveConnectionConfig, parseHanaUrl } from "./config.ts";
 export type { Contract } from "../schema/contract.ts";
+export { Column, SQL, sql, alias, createTables, TABLE } from "./builder/core.ts";
+export type { Table, RowOf, InferRow, InsertOf, AliasOf } from "./builder/core.ts";
+export { eq, ne, gt, gte, lt, lte, like, notLike, ilike, inArray, notInArray, isNull, isNotNull, between, and, or, not, exists, notExists, asc, desc, count, countDistinct, sum, avg, min, max } from "./builder/ops.ts";
+export type { Expr, Operand } from "./builder/ops.ts";
+export { SelectBuilder, SelectStart, InsertBuilder, UpdateBuilder, UpdateStart, DeleteBuilder, WithStart } from "./builder/query.ts";
+export type { Selection, SelectResult, ResultOf, Subquery, Cte, SubqueryColumns, SetValues } from "./builder/query.ts";
 export { typedSql, decodeTypedRow, sqlColumnKind } from "./typed-sql.ts";
 export type { SqlColumnKind, TypedSql } from "./typed-sql.ts";
 export { DURATION_BUCKETS_MS } from "./events.ts";
