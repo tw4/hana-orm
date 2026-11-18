@@ -146,6 +146,29 @@ Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `ag
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
 
+#### Events, logging and metrics
+
+```ts
+const db = new HanaClient({ log: ["warn", "error"], slowQueryThreshold: 500 });
+
+const off = db.$on("query", (e) => metrics.observe(e.durationMs)); // { sql, params, durationMs, inTransaction, error? }
+db.$on("error", (e) => report(e.target, e.message));               // e.g. target "User.create"
+off();                                                             // unsubscribe
+
+db.$metrics();
+// { queries: { total, failed, durationMs: { total, max, avg }, histogram: [{ le: 1, count }, …] },
+//   transactions: { total, committed, rolledBack }, pool: { size, open, idle, busy, waiting } }
+```
+
+- Events: `query` (every statement, also inside transactions), `info` (connect/disconnect),
+  `warn` (statements slower than `slowQueryThreshold` ms) and `error` (a failed model
+  operation, raw query or transaction).
+- Parameter values are **not** included in events or logs unless the client is created with
+  `logParams: true`; they may contain personal data.
+- `log: true` prints every statement; `log: ["query", "info", "warn", "error"]` prints those
+  events; `log: (e) => …` receives every statement.
+- A listener that throws is ignored, so it cannot break a query.
+
 #### Many-to-many relations
 
 Two list fields that point at each other, with no `@relation(fields, references)` side, form an

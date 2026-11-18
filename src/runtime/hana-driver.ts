@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import type { Driver, QueryEvent, Queryable, TransactionOptions } from "./driver.ts";
 import { DatabaseError, TransactionError } from "./errors.ts";
+import type { PoolStats } from "./events.ts";
 
 export interface ConnectionConfig {
   host: string;
@@ -242,6 +243,11 @@ export class HanaDriver implements Driver {
         c.conn.setAutoCommit(true);
       }
     }, options.maxWait);
+  }
+
+  /** Pool usage right now (`$metrics().pool`). */
+  stats(): PoolStats {
+    return { size: this.poolSize, open: this.open, idle: this.idle.length, busy: this.open - this.idle.length, waiting: this.waiters.length };
   }
 
   async close(): Promise<void> {
