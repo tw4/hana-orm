@@ -52,10 +52,14 @@
     "pretest": "node test/setup.ts"
   },
   "peerDependencies": {
-    "@sap/hana-client": ">=2.20.0"
+    "@sap/hana-client": ">=2.20.0",
+    "decimal.js": ">=10.4.0"
   },
   "peerDependenciesMeta": {
     "@sap/hana-client": {
+      "optional": true
+    },
+    "decimal.js": {
       "optional": true
     }
   },

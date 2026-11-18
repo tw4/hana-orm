@@ -179,6 +179,37 @@ export function buildContract(ast: SchemaAst, options: BuildOptions = {}): Contr
           if (fields) model.indexes.push({ dbName: namedMap(a) ?? constraintName("IX", model.dbName, columnNames(model, fields)), fields });
           break;
         }
+        case "fulltext": {
+          const fields = fieldListArg(a, model, err);
+          if (!fields) break;
+          const map = namedMap(a);
+          if (map && fields.length > 1) err(`@@fulltext with map: takes one field; HANA creates one full-text index per column`, a.pos);
+          for (const name of fields) {
+            const f = model.fields.find((x) => x.name === name);
+            if (f && (f.kind !== "scalar" || f.type !== "String")) {
+              err(`@@fulltext field '${name}' of '${m.name}' must be a String field`, a.pos);
+              continue;
+            }
+            const list = (model.fulltext ??= []);
+            if (list.some((x) => x.field === name)) err(`Field '${name}' of '${m.name}' has more than one @@fulltext index`, a.pos);
+            else list.push({ dbName: map ?? constraintName("FTI", model.dbName, columnNames(model, [name])), field: name });
+          }
+          break;
+        }
+        case "check": {
+          const sqlArg = a.args.find((x) => !x.name);
+          const sql = sqlArg?.value.kind === "string" ? sqlArg.value.value.trim() : "";
+          if (!sql) {
+            err(`@@check expects a SQL condition string, e.g. @@check("PRICE >= 0")`, a.pos);
+            break;
+          }
+          for (const x of a.args) if (x.name && x.name !== "map") err(`Unknown argument '${x.name}' in @@check`, a.pos);
+          const checks = (model.checks ??= []);
+          const dbName = namedMap(a) ?? checkName(model.dbName, checks.length + 1);
+          if (dbName.length > MAX_IDENT) err(`Name '${dbName}' is longer than ${MAX_IDENT} characters`, a.pos);
+          checks.push({ dbName, sql });
+          break;
+        }
         default:
           err(`Unknown block attribute '@@${a.name}'`, a.pos);
       }
@@ -223,6 +254,21 @@ export function buildContract(ast: SchemaAst, options: BuildOptions = {}): Contr
     const prev = tables.get(key);
     if (prev) err(`Models '${prev}' and '${m.name}' map to the same table '${m.dbName}'`);
     tables.set(key, m.name);
+  }
+
+  // ---- sequences shared by several fields must agree on their options ------------
+  const sequences = new Map<string, { where: string; start?: number; increment?: number }>();
+  for (const m of Object.values(models)) {
+    for (const f of m.fields) {
+      if (f.kind === "relation" || f.default?.kind !== "sequence") continue;
+      const d = f.default;
+      const key = `${m.schema ?? ""}.${d.name}`;
+      const prev = sequences.get(key);
+      if (!prev) sequences.set(key, { where: `${m.name}.${f.name}`, ...(d.start !== undefined ? { start: d.start } : {}), ...(d.increment !== undefined ? { increment: d.increment } : {}) });
+      else if (prev.start !== d.start || prev.increment !== d.increment) {
+        err(`Sequence '${d.name}' is used by ${prev.where} and ${m.name}.${f.name} with different start/increment`, modelDecls.find((x) => x.name === m.name)?.pos);
+      }
+    }
   }
 
   resolveRelations(pending, models, err);
@@ -371,6 +417,25 @@ function buildDefault(a: Attribute, f: FieldDecl, enumDef: EnumDef | undefined, 
       case "cuid":
         if (f.type !== "String") err(`${v.name}() is only valid on String fields`, a.pos);
         return { kind: v.name };
+      case "sequence": {
+        if (f.type !== "Int" && f.type !== "BigInt") err(`sequence() is only valid on Int and BigInt fields`, a.pos);
+        const name = v.args.find((x) => !x.name)?.value;
+        if (!name || name.kind !== "string" || !name.value) {
+          err(`sequence() expects the sequence name as a string, e.g. sequence("ORDER_NO")`, a.pos);
+          return undefined;
+        }
+        if (name.value.length > MAX_IDENT) err(`Name '${name.value}' is longer than ${MAX_IDENT} characters`, a.pos);
+        const def: Extract<DefaultDef, { kind: "sequence" }> = { kind: "sequence", name: name.value };
+        for (const x of v.args) {
+          if (!x.name) continue;
+          if ((x.name === "start" || x.name === "increment") && x.value.kind === "number" && Number.isInteger(x.value.value)) {
+            if (x.name === "increment" && x.value.value === 0) err(`sequence() increment cannot be 0`, a.pos);
+            def[x.name] = x.value.value;
+          } else err(`Unknown or invalid argument '${x.name}' in sequence(); expected start: <integer> or increment: <integer>`, a.pos);
+        }
+        if (v.args.filter((x) => !x.name).length > 1) err(`sequence() takes one name; use start: and increment: for options`, a.pos);
+        return def;
+      }
       case "dbgenerated": {
         const sql = v.args[0]?.value;
         if (!sql || sql.kind !== "string") {
@@ -757,6 +822,11 @@ function columnNames(model: ModelDef, fields: string[]): string[] {
     const f = model.fields.find((x) => x.name === n);
     return f && f.kind !== "relation" ? f.dbName : n;
   });
+}
+
+/** Default name of the n-th (1-based) `@@check` of a table: `CK_ORDERS_1`. */
+export function checkName(table: string, n: number): string {
+  return constraintName("CK", table, [String(n)]);
 }
 
 /** Deterministic constraint name, e.g. `UQ_USERS_EMAIL`, trimmed to the HANA identifier limit. */

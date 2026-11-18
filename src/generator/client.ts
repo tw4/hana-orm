@@ -1,3 +1,4 @@
+import { DECIMAL_MODES, type DecimalMode } from "../runtime/codec.ts";
 import { clientContract, columnFields, relationFields, type ColumnFieldDef, type Contract, type ModelDef, type RelationFieldDef } from "../schema/contract.ts";
 
 export interface GenerateOptions {
@@ -5,7 +6,13 @@ export interface GenerateOptions {
   runtimeImport?: string;
   /** Name of the generated client class (default `HanaClient`). */
   clientName?: string;
+  /** How Decimal fields are typed and returned (default "string"). */
+  decimal?: DecimalMode;
 }
+
+/** Type of a Decimal value in the generated code, per mode (the generator sets it). */
+let decimalType = "$r.Decimal";
+let decimalInput = "$r.Decimal | number";
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
@@ -20,7 +27,7 @@ function outputType(contract: Contract, f: ColumnFieldDef): string {
     case "BigInt":
       return "bigint";
     case "Decimal":
-      return "$r.Decimal";
+      return decimalType;
     case "Boolean":
       return "boolean";
     case "DateTime":
@@ -36,7 +43,7 @@ function outputType(contract: Contract, f: ColumnFieldDef): string {
 function inputType(contract: Contract, f: ColumnFieldDef): string {
   if (f.kind === "scalar") {
     if (f.type === "BigInt") return "bigint | number";
-    if (f.type === "Decimal") return "$r.Decimal | number";
+    if (f.type === "Decimal") return decimalInput;
     if (f.type === "DateTime") return "Date | string";
     if (f.type === "Bytes") return "Buffer | Uint8Array";
   }
@@ -51,11 +58,13 @@ function filterType(contract: Contract, f: ColumnFieldDef): string {
   const t = inputType(contract, f);
   const n = f.optional;
   if (f.kind === "scalar") {
-    if (f.type === "String") return n ? `string | null | $r.StringNullableFilter` : `string | $r.StringFilter`;
-    if (f.type === "Boolean") return n ? `boolean | null | $r.BoolNullableFilter` : `boolean | $r.BoolFilter`;
+    if (f.type === "String") return n ? `string | $r.Placeholder | null | $r.StringNullableFilter` : `string | $r.Placeholder | $r.StringFilter`;
+    if (f.type === "Boolean") return n ? `boolean | $r.Placeholder | null | $r.BoolNullableFilter` : `boolean | $r.Placeholder | $r.BoolFilter`;
     if (f.type === "Json") return `$r.JsonFilter`;
   }
-  return n ? `${t} | null | $r.NullableFilter<${t}>` : `${t} | $r.Filter<${t}>`;
+  // placeholder("x") may stand for a value in prepared queries
+  const tp = `${t} | $r.Placeholder`;
+  return n ? `${tp} | null | $r.NullableFilter<${tp}>` : `${tp} | $r.Filter<${tp}>`;
 }
 
 function doc(text: string | undefined, indent = ""): string {
@@ -103,12 +112,15 @@ function modelTypes(contract: Contract, m: ModelDef): string {
 
   // where
   L.push(`export type ${M}WhereInput = {`);
-  L.push(`  AND?: ${M}WhereInput | ${M}WhereInput[];`, `  OR?: ${M}WhereInput[];`, `  NOT?: ${M}WhereInput | ${M}WhereInput[];`);
+  // an sql`...` fragment can stand for a condition (issue #31)
+  const W = `${M}WhereInput | $r.SQL<unknown>`;
+  L.push(`  AND?: ${W} | (${W})[];`, `  OR?: (${W})[];`, `  NOT?: ${W} | (${W})[];`);
   for (const f of cols) L.push(`  ${f.name}?: ${filterType(contract, f)};`);
   for (const r of rels) {
     const T = r.model;
-    if (r.list) L.push(`  ${r.name}?: { some?: ${T}WhereInput; every?: ${T}WhereInput; none?: ${T}WhereInput };`);
-    else L.push(`  ${r.name}?: ${T}WhereInput | null | { is?: ${T}WhereInput | null; isNot?: ${T}WhereInput | null };`);
+    const TW = `${T}WhereInput | $r.SQL<unknown>`;
+    if (r.list) L.push(`  ${r.name}?: { some?: ${TW}; every?: ${TW}; none?: ${TW} };`);
+    else L.push(`  ${r.name}?: ${TW} | null | { is?: ${TW} | null; isNot?: ${TW} | null };`);
   }
   L.push("};", "");
 
@@ -116,8 +128,8 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   if (combos.length) {
     const alts = combos.map((c) =>
       c.fields.length === 1
-        ? `{ ${c.fields[0]}: ${inputType(contract, m.fields.find((x) => x.name === c.fields[0]) as ColumnFieldDef)} }`
-        : `{ ${c.key}: { ${c.fields.map((n) => `${n}: ${inputType(contract, m.fields.find((x) => x.name === n) as ColumnFieldDef)}`).join("; ")} } }`,
+        ? `{ ${c.fields[0]}: ${inputType(contract, m.fields.find((x) => x.name === c.fields[0]) as ColumnFieldDef)} | $r.Placeholder }`
+        : `{ ${c.key}: { ${c.fields.map((n) => `${n}: ${inputType(contract, m.fields.find((x) => x.name === n) as ColumnFieldDef)} | $r.Placeholder`).join("; ")} } }`,
     );
     L.push(`export type ${M}WhereUniqueInput = ${M}WhereInput & (${alts.join(" | ")});`, "");
   } else {
@@ -162,17 +174,17 @@ function modelTypes(contract: Contract, m: ModelDef): string {
 
   // args
   L.push(`export type ${M}FindManyArgs = {`);
-  L.push(`  where?: ${M}WhereInput;`, `  select?: ${M}Select | null;`, `  include?: ${M}Include | null;`, `  omit?: ${M}Omit | null;`);
+  L.push(`  where?: ${M}WhereInput | $r.SQL<unknown>;`, `  select?: ${M}Select | null;`, `  include?: ${M}Include | null;`, `  omit?: ${M}Omit | null;`);
   L.push(`  orderBy?: ${M}OrderByInput | ${M}OrderByInput[];`, `  cursor?: ${M}WhereUniqueInput;`, `  take?: number;`, `  skip?: number;`);
   L.push(`  /** One row per distinct combination of these fields (the first one in \`orderBy\` order). */`);
   L.push(`  distinct?: ${M}ScalarField | ${M}ScalarField[];`);
   L.push("};");
   L.push(`export type ${M}FindUniqueArgs = { where: ${M}WhereUniqueInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null };`);
-  L.push(`export type ${M}CountArgs = { where?: ${M}WhereInput; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number; select?: { _all?: boolean } & { [K in keyof ${M}]?: boolean } };`);
+  L.push(`export type ${M}CountArgs = { where?: ${M}WhereInput | $r.SQL<unknown>; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number; select?: { _all?: boolean } & { [K in keyof ${M}]?: boolean } };`);
   const numeric = cols.filter(isNumeric).map((f) => `${f.name}?: true`).join("; ");
   const all = cols.map((f) => `${f.name}?: true`).join("; ");
   L.push(`export type ${M}AggregateArgs = {`);
-  L.push(`  where?: ${M}WhereInput; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number;`);
+  L.push(`  where?: ${M}WhereInput | $r.SQL<unknown>; orderBy?: ${M}OrderByInput | ${M}OrderByInput[]; cursor?: ${M}WhereUniqueInput; take?: number; skip?: number;`);
   L.push(`  _count?: true | { _all?: true; ${all} }; _sum?: { ${numeric} }; _avg?: { ${numeric} }; _min?: { ${all} }; _max?: { ${all} };`);
   L.push("};");
   L.push(`export type ${M}ScalarField = ${cols.map((f) => `"${f.name}"`).join(" | ") || "never"};`);
@@ -260,26 +272,27 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   }
 
   // delegate
-  L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate<G = {}> {`);
-  L.push(`  findMany<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>[]>;`);
-  L.push(`  findFirst<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G> | null>;`);
-  L.push(`  findFirstOrThrow<A extends ${M}FindManyArgs = {}>(args?: A): Promise<${M}GetPayload<A, G>>;`);
-  L.push(`  findUnique<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G> | null>;`);
-  L.push(`  findUniqueOrThrow<A extends ${M}FindUniqueArgs>(args: A): Promise<${M}GetPayload<A, G>>;`);
+  L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate<G = {}, R = {}> {`);
+  L.push(`  /** @internal Types of computed fields from \`$extends({ result })\` (type-only). */`, `  readonly $computed?: R;`);
+  L.push(`  findMany<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>[]>;`);
+  L.push(`  findFirst<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A> | null>;`);
+  L.push(`  findFirstOrThrow<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
+  L.push(`  findUnique<A extends $r.ArgsWithComputed<${M}FindUniqueArgs, R>>(args: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A> | null>;`);
+  L.push(`  findUniqueOrThrow<A extends $r.ArgsWithComputed<${M}FindUniqueArgs, R>>(args: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
   L.push(`  count<A extends ${M}CountArgs = {}>(args?: A): Promise<A extends { select: infer S } ? { [K in $r.SelectedKeys<S>]: number } : number>;`);
   L.push(`  aggregate<A extends ${M}AggregateArgs>(args: A): Promise<$r.AggregatePayload<${M}, A>>;`);
   L.push(`  groupBy<A extends ${M}GroupByArgs>(args: A): Promise<$r.GroupByPayload<${M}, A>[]>;`);
   if (m.kind !== "view") {
-    L.push(`  create<A extends { data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }>(args: A): Promise<${M}GetPayload<A, G>>;`);
+    L.push(`  create<A extends $r.ArgsWithComputed<{ data: ${M}CreateInput; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
     L.push(`  createMany(args: { data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean }): Promise<$r.BatchPayload>;`);
-    L.push(`  createManyAndReturn<A extends { data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }>(args: A): Promise<${M}GetPayload<A, G>[]>;`);
-    L.push(`  updateMany(args: { where?: ${M}WhereInput; data: ${M}UpdateManyInput }): Promise<$r.BatchPayload>;`);
-    L.push(`  deleteMany(args?: { where?: ${M}WhereInput }): Promise<$r.BatchPayload>;`);
+    L.push(`  createManyAndReturn<A extends $r.ArgsWithComputed<{ data: ${M}CreateManyInput | ${M}CreateManyInput[]; skipDuplicates?: boolean; select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>[]>;`);
+    L.push(`  updateMany(args: { where?: ${M}WhereInput | $r.SQL<unknown>; data: ${M}UpdateManyInput }): Promise<$r.BatchPayload>;`);
+    L.push(`  deleteMany(args?: { where?: ${M}WhereInput | $r.SQL<unknown> }): Promise<$r.BatchPayload>;`);
     if (!readOnly) {
       const sel = `select?: ${M}Select | null; include?: ${M}Include | null; omit?: ${M}Omit | null`;
-      L.push(`  update<A extends { where: ${M}WhereUniqueInput; data: ${M}UpdateInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
-      L.push(`  upsert<A extends { where: ${M}WhereUniqueInput; create: ${M}CreateInput; update: ${M}UpdateInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
-      L.push(`  delete<A extends { where: ${M}WhereUniqueInput; ${sel} }>(args: A): Promise<${M}GetPayload<A, G>>;`);
+      L.push(`  update<A extends $r.ArgsWithComputed<{ where: ${M}WhereUniqueInput; data: ${M}UpdateInput; ${sel} }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
+      L.push(`  upsert<A extends $r.ArgsWithComputed<{ where: ${M}WhereUniqueInput; create: ${M}CreateInput; update: ${M}UpdateInput; ${sel} }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
+      L.push(`  delete<A extends $r.ArgsWithComputed<{ where: ${M}WhereUniqueInput; ${sel} }, R>>(args: A): Promise<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
     }
   }
   L.push("}", "");
@@ -291,12 +304,18 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   // @ignore / @@ignore parts stay in the schema for migrations but never reach the client
   const contract = clientContract(fullContract);
   const runtime = options.runtimeImport ?? "hana-orm/runtime";
+  const decimal = options.decimal ?? "string";
+  if (!DECIMAL_MODES.includes(decimal)) throw new Error(`Unknown decimal mode '${String(decimal)}'; use ${DECIMAL_MODES.map((m) => `"${m}"`).join(", ")}`);
+  decimalType = decimal === "number" ? "number" : decimal === "decimal.js" ? "$Decimal" : "$r.Decimal";
+  decimalInput = decimal === "number" ? "number | string" : decimal === "decimal.js" ? "$Decimal | number | string" : "$r.Decimal | number";
   const C = options.clientName ?? "HanaClient";
   const models = Object.values(contract.models);
   const out: string[] = [];
   out.push("// Generated by hana-orm. Do not edit: run `hana-orm generate` after changing the schema.");
   out.push("/* eslint-disable */");
-  out.push(`import * as $r from "${runtime}";`, "");
+  out.push(`import * as $r from "${runtime}";`);
+  if (decimal === "decimal.js") out.push(`import { Decimal as $Decimal } from "decimal.js";`);
+  out.push("");
   out.push(`export const contract: $r.Contract = ${JSON.stringify(contract)};`, "");
 
   for (const e of Object.values(contract.enums)) {
@@ -309,31 +328,71 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   out.push(`/** Client-wide \`omit\` option: fields left out of every result of a model unless a query asks for them. */`);
   out.push(`export type ${C}OmitConfig = { ${models.map((m) => `${lowerFirst(m.name)}?: ${m.name}Omit`).join("; ")} };`);
   out.push(`export interface ${C}Options extends $r.ClientOptions { omit?: ${C}OmitConfig }`, "");
+  // SQL-like query builder: typed tables and the builder methods (skipped when a model has the name)
+  out.push(`/** Tables for the SQL-like builder: \`db.select().from(tables.user)\`. */`);
+  out.push(`export const tables = $r.createTables(contract) as unknown as {`);
+  for (const m of models) {
+    const key = lowerFirst(m.name);
+    const cols = columnFields(m).map((f) => `readonly ${f.name}: $r.Column<${outputType(contract, f)}${f.optional ? " | null" : ""}, "${key}">`);
+    out.push(`  readonly ${key}: $r.Table<"${key}", { ${cols.join("; ")} }, ${m.kind === "view" ? "never" : `${m.name}CreateManyInput`}>;`);
+  }
+  out.push("};");
+  out.push(
+    `export { sql, alias, eq, ne, gt, gte, lt, lte, like, notLike, ilike, inArray, notInArray, isNull, isNotNull, between, and, or, not, exists, notExists, asc, desc, count, countDistinct, sum, avg, min, max } from "${runtime}";`,
+    "",
+  );
+  const taken = new Set(models.map((m) => lowerFirst(m.name)));
+  const builderMethods: string[] = [];
+  const add = (name: string, ...lines: string[]) => {
+    if (!taken.has(name)) builderMethods.push(...lines);
+  };
+  const anyTable = "{ readonly [$r.TABLE]: unknown }";
+  add("select", `  select(): $r.SelectStart<"all">;`, `  select<S extends $r.Selection>(fields: S): $r.SelectStart<S>;`);
+  add("selectDistinct", `  selectDistinct(): $r.SelectStart<"all">;`, `  selectDistinct<S extends $r.Selection>(fields: S): $r.SelectStart<S>;`);
+  add("insert", `  insert<T extends ${anyTable}>(table: T): $r.InsertBuilder<$r.InsertOf<T>>;`);
+  add("update", `  update<T extends ${anyTable}>(table: T): $r.UpdateStart<T>;`);
+  add("delete", `  delete<T extends ${anyTable}>(table: T): $r.DeleteBuilder;`);
+  add("with", `  with(...ctes: $r.Cte<string, Record<string, unknown>>[]): { select(): $r.SelectStart<"all">; select<S extends $r.Selection>(fields: S): $r.SelectStart<S>; selectDistinct<S extends $r.Selection>(fields?: S): $r.SelectStart<S | "all"> };`);
+  builderMethods.push(`  $with<A extends string>(name: A): $r.WithStart<A>;`);
+
   out.push(`export interface ${C}Transaction<G = {}> {`);
   for (const m of models) out.push(`  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G>;`);
+  out.push(...builderMethods);
   out.push(`  $queryRaw<T = Record<string, unknown>>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T[]>;`);
   out.push(`  $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number>;`);
   out.push(`  $queryRawUnsafe<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;`);
   out.push(`  $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number>;`);
+  out.push(`  /** Runs a query generated from a .sql file (\`hana-orm generate --sql\`). */`);
+  out.push(`  $queryRawTyped<R>(query: $r.TypedSql<R>): Promise<R[]>;`);
   out.push("}", "");
   out.push(`export interface ${C}<G = {}> extends ${C}Transaction<G> {`);
   out.push(`  $connect(): Promise<void>;`);
   out.push(`  $disconnect(): Promise<void>;`);
+  out.push(`  /** Subscribes to \`query\`, \`info\`, \`warn\` or \`error\` events; returns a function that unsubscribes. */`);
+  out.push(`  $on<E extends $r.ClientEventName>(event: E, handler: (event: $r.ClientEvents[E]) => void): () => void;`);
+  out.push(`  /** Query and transaction counters and the connection pool's state. */`);
+  out.push(`  $metrics(): $r.ClientMetrics;`);
   out.push(`  $transaction<R>(fn: (tx: ${C}Transaction<G>) => Promise<R>, options?: $r.TransactionOptions): Promise<R>;`);
   out.push(`  /** Runs the queries in order in one transaction. Pass them without awaiting them. */`);
   out.push(`  $transaction<const P extends readonly Promise<unknown>[]>(queries: P, options?: $r.TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;`);
-  out.push(`  $extends<E extends $r.ExtensionArgs>(extension: E): Extended<${C}<G>, E, G>;`);
+  out.push(`  /** Runs queries and builders in order on one connection in one transaction; identical builder updates/deletes go as one batch. */`);
+  out.push(`  $batch<const P extends readonly PromiseLike<unknown>[]>(items: P, options?: $r.TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }>;`);
+  out.push(`  $extends<E extends $r.ExtensionArgs & { result?: ${C}ResultArgs }>(extension: E): Extended<${C}<G>, E, G>;`);
   out.push("}", "");
+  out.push(`/** \`result\` extension shape: \`compute\` receives the model row. */`);
+  out.push(`export type ${C}ResultArgs = { ${models.map((m) => `${lowerFirst(m.name)}?: Record<string, { needs?: { [F in keyof ${m.name}]?: boolean }; compute: (row: ${m.name}) => unknown }>`).join("; ")} };`);
   out.push(`type ModelMethods<E, K extends string> = E extends { model: infer MM } ? (MM extends Record<string, unknown> ? (K extends keyof MM ? MM[K] : {}) & ("$allModels" extends keyof MM ? MM["$allModels"] : {}) : {}) : {};`);
   out.push(`type ClientMethods<E> = E extends { client: infer CM } ? CM : {};`);
   out.push(
-    `export type Extended<C, E, G = {}> = Omit<C, ${models.map((m) => `"${lowerFirst(m.name)}"`).join(" | ") || "never"}> & ClientMethods<E> & {\n${models
-      .map((m) => `  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G> & ModelMethods<E, "${lowerFirst(m.name)}">;`)
+    `export type Extended<C, E, G = {}> = Omit<C, ${[...models.map((m) => `"${lowerFirst(m.name)}"`), `"$extends"`].join(" | ")}> & ClientMethods<E> & {\n` +
+      `  /** Extends again; computed fields of earlier extensions are kept. */\n` +
+      `  $extends<E2 extends $r.ExtensionArgs & { result?: ${C}ResultArgs }>(extension: E2): Extended<Extended<C, E, G>, E2, G>;\n${models
+      .map((m) => `  readonly ${lowerFirst(m.name)}: ${m.name}Delegate<G, $r.Simplify<$r.PrevComputed<C, "${lowerFirst(m.name)}"> & $r.ComputedOf<E, "${lowerFirst(m.name)}">>> & ModelMethods<E, "${lowerFirst(m.name)}">;`)
       .join("\n")}\n};`,
     "",
   );
   out.push(
-    `export const ${C} = $r.createClientClass(contract) as unknown as { new <const G extends ${C}OmitConfig = {}>(options?: ${C}Options & { omit?: G }): ${C}<G> };`,
+    `export const ${C} = $r.createClientClass(contract${decimal === "string" ? "" : `, { decimal: "${decimal}"${decimal === "decimal.js" ? ", Decimal: $Decimal" : ""} }`}) as unknown as { new <const G extends ${C}OmitConfig = {}>(options?: ${C}Options & { omit?: G }): ${C}<G> };`,
     "",
   );
   return out.join("\n");

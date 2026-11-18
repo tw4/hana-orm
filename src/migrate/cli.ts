@@ -16,6 +16,7 @@ import {
 } from "./commands.ts";
 import { dbSeed } from "./seed.ts";
 import { migrateReset } from "./reset.ts";
+import { migrateSplit, migrateSquash } from "./squash.ts";
 import { dbExecute, migrateDiff } from "./diff-command.ts";
 
 export const DB_MIGRATE_HELP = `Database commands:
@@ -51,6 +52,17 @@ Migration commands:
                               Create the first migration from the schema and record it as
                               applied without running it (for existing databases).
   migrate unlock              Release a stale migration lock.
+  migrate squash --from <id> --to <id> [--name <name>] [--baseline]
+                              Combine a range of migrations into one. Ids may be prefixes.
+                              The new ops.json lists the migrations it replaces, so databases
+                              that applied them treat it as applied. Refuses when the range is
+                              applied in the configured database unless --baseline, which records
+                              the result as applied there; a partly applied range is refused.
+  migrate split <id> [--at <op>,<op>…] [--baseline]
+                              Cut a migration into several, one per operation or starting a new
+                              part at each listed operation number (1-based, in ops.json order).
+                              Parts before the last carry the final contract.json. Same rules
+                              for applied migrations as squash.
   migrate diff --from <source> --to <source> [--script] [--exit-code]
                               Show the changes that turn one state into another. A source is
                               empty, schema, migrations (the latest migration), migrations:<id>
@@ -78,6 +90,8 @@ const COMMANDS: Record<"db" | "migrate", Record<string, Command>> = {
     resolve: migrateResolve,
     baseline: (a, c) => migrateBaseline(a, c),
     unlock: migrateUnlock,
+    squash: migrateSquash,
+    split: migrateSplit,
     reset: migrateReset,
     diff: migrateDiff,
   },

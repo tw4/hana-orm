@@ -1,5 +1,20 @@
 import type { ColumnFieldDef, Contract } from "../schema/contract.ts";
 import { ValidationError } from "./errors.ts";
+import { Placeholder, PlaceholderSlot } from "./placeholder.ts";
+
+/** How `Decimal` fields come back: exact strings (default), JS numbers, or decimal.js instances. */
+export type DecimalMode = "string" | "number" | "decimal.js";
+
+export const DECIMAL_MODES: readonly DecimalMode[] = ["string", "number", "decimal.js"];
+
+/** A decimal.js-compatible class: `new Decimal("12.50")`. */
+export type DecimalConstructor = new (value: string) => unknown;
+
+export interface DecodeOptions {
+  decimal?: DecimalMode;
+  /** Required for `decimal: "decimal.js"`; the generated client passes decimal.js' class. */
+  Decimal?: DecimalConstructor;
+}
 
 /**
  * Converts between JavaScript values and what `@sap/hana-client` expects/returns.
@@ -49,6 +64,8 @@ function describe(v: unknown): string {
 
 /** JS value → driver parameter. `null`/`undefined` → null. */
 export function encodeValue(contract: Contract, field: ColumnFieldDef, value: unknown): unknown {
+  // prepared queries: the value comes later and is encoded like this field
+  if (value instanceof Placeholder) return new PlaceholderSlot(value.name, field);
   if (value === null || value === undefined) return null;
   if (field.kind === "enum") {
     const e = contract.enums[field.type]!;
@@ -74,7 +91,8 @@ export function encodeValue(contract: Contract, field: ColumnFieldDef, value: un
     case "Decimal":
       if (typeof value === "number" || typeof value === "bigint") return String(value);
       if (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value)) return value;
-      if (typeof value === "object" && value && "toFixed" in value) return String(value);
+      // decimal.js and similar: toFixed() without digits keeps every digit and never uses exponent notation
+      if (typeof value === "object" && value && typeof (value as { toFixed?: unknown }).toFixed === "function") return (value as { toFixed(): string }).toFixed();
       throw new ValidationError(`Field '${field.name}' expects a decimal (string or number), got ${describe(value)}`);
     case "Boolean":
       if (typeof value !== "boolean") throw new ValidationError(`Field '${field.name}' expects a boolean, got ${describe(value)}`);
@@ -95,7 +113,7 @@ export function encodeValue(contract: Contract, field: ColumnFieldDef, value: un
 }
 
 /** Driver value → JS value. */
-export function decodeValue(contract: Contract, field: ColumnFieldDef, value: unknown): unknown {
+export function decodeValue(contract: Contract, field: ColumnFieldDef, value: unknown, options: DecodeOptions = {}): unknown {
   if (value === null || value === undefined) return null;
   if (field.kind === "enum") {
     const e = contract.enums[field.type]!;
@@ -108,7 +126,7 @@ export function decodeValue(contract: Contract, field: ColumnFieldDef, value: un
     case "BigInt":
       return typeof value === "bigint" ? value : BigInt(value as string | number);
     case "Decimal":
-      return String(value);
+      return decodeDecimal(String(value), options);
     case "Boolean":
       return value === true || value === 1 || value === "1" || value === "TRUE" || value === "true";
     case "DateTime":
@@ -120,5 +138,17 @@ export function decodeValue(contract: Contract, field: ColumnFieldDef, value: un
       return typeof value === "string" ? JSON.parse(value) : value;
     case "String":
       return Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
+  }
+}
+
+function decodeDecimal(text: string, options: DecodeOptions): unknown {
+  switch (options.decimal ?? "string") {
+    case "string":
+      return text;
+    case "number":
+      return Number(text);
+    case "decimal.js":
+      if (!options.Decimal) throw new Error('decimal = "decimal.js" needs the Decimal class; regenerate the client with `hana-orm generate`');
+      return new options.Decimal(text);
   }
 }

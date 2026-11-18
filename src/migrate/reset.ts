@@ -49,18 +49,22 @@ function flagSet(args: ParsedArgs, name: string): boolean {
   return v === true || v === "true";
 }
 
-/** Tables the project owns: all migration snapshots, the current schema and housekeeping. */
+/** Tables and sequences the project owns: all migration snapshots, the current schema and housekeeping. */
 async function ownedTables(db: Driver, migrations: readonly LoadedMigration[], contract: Contract | undefined, defaultSchema: string): Promise<DropTarget[]> {
   const keys = new Set<string>();
+  const sequenceKeys = new Set<string>();
   const schemas = new Set<string>([defaultSchema]);
   const add = (c: Pick<Contract, "models" | "enums">) => {
-    for (const k of Object.keys(contractToPhysical(c, { defaultSchema }).tables)) keys.add(k);
+    const phys = contractToPhysical(c, { defaultSchema });
+    for (const k of Object.keys(phys.tables)) keys.add(k);
+    for (const k of Object.keys(phys.sequences ?? {})) sequenceKeys.add(k);
     for (const s of contractSchemas(c, defaultSchema)) schemas.add(s);
   };
   for (const m of migrations) add(await readSnapshot(m));
   if (contract) add(contract);
-  const live = await introspect(db, { schemas: [...schemas], defaultSchema, onlyTables: keys });
+  const live = await introspect(db, { schemas: [...schemas], defaultSchema, onlyTables: keys, onlySequences: sequenceKeys });
   const out: DropTarget[] = Object.values(live.tables).map((t) => ({ kind: "TABLE" as const, schema: t.schema ?? defaultSchema, name: t.name }));
+  for (const s of Object.values(live.sequences ?? {})) out.push({ kind: "SEQUENCE", schema: s.schema ?? defaultSchema, name: s.name });
   // introspection hides the housekeeping tables, so look them up directly
   const housekeeping = await db.query<{ TABLE_NAME: string }>(
     `SELECT TABLE_NAME FROM SYS.TABLES WHERE SCHEMA_NAME = ? AND TABLE_NAME IN (${HOUSEKEEPING_TABLES.map(() => "?").join(", ")}) ORDER BY TABLE_NAME`,
