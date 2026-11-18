@@ -245,6 +245,26 @@ A source is `empty`, `schema`, `migrations` (the latest migration), `migrations:
 Against `db`, only the tables the other side defines are compared, so other tables in a shared
 schema are not reported. `migrate diff` never changes the database.
 
+### Squashing and splitting migrations
+
+```sh
+npx hana-orm migrate squash --from 20261101 --to 20261115 --name q4_schema   # ids may be prefixes
+npx hana-orm migrate split 20261117093000_init --at 3                        # new part from op 3
+npx hana-orm migrate split 20261117093000_init                               # one migration per op
+```
+
+`squash` concatenates the operations of a range of migrations into one migration that keeps the
+first one's `from` and the last one's `to` contract hash, so the migrations around it still chain.
+Hand-written SQL and data-migration scripts are copied as `<old id>_migration.sql` /
+`<old id>_migration.ts`. `split` cuts a migration into parts chained through generated contract
+hashes; parts before the last carry the final `contract.json`.
+
+The new `ops.json` lists the migrations it replaces with their checksums. A database that
+applied them treats the new migration as applied, and their history rows are not reported as
+missing; a database that applied only some of them is reported by `migrate status` and `deploy`
+stops. Both commands refuse when the configured database has the affected migrations applied,
+unless `--baseline` is passed, which records the result there as applied without running it.
+
 ### Seeding
 
 `hana-orm db seed` runs your seed command with the `.env` file loaded (the schema path is
