@@ -3,7 +3,8 @@
 A type-safe TypeScript ORM for **SAP HANA**: a declarative schema, a generated client whose
 result types follow your `select`/`include`, and a migrations CLI that produces reviewable SQL.
 
-> Status: **alpha** (`0.1.0-alpha`). APIs may still change. See [ROADMAP.md](ROADMAP.md).
+> Status: **release candidate** (`1.0.0-rc.1`, `npm install hana-orm@next`). The API is meant to
+> be stable for 1.0; breaking changes until then are listed in [CHANGELOG.md](CHANGELOG.md).
 
 **Documentation: <https://tw4.github.io/hana-orm/>** (getting started, schema and client
 reference, migrations, HANA type mapping, guides for moving from Prisma, TypeORM and the raw
