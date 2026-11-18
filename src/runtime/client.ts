@@ -7,7 +7,7 @@ import { Engine } from "./engine.ts";
 import { NotFoundError, TransactionError, ValidationError } from "./errors.ts";
 import { HanaDriver, type ConnectionConfig } from "./hana-driver.ts";
 import { TABLE, type InsertOf } from "./builder/core.ts";
-import { DeleteBuilder, InsertBuilder, SelectStart, UpdateStart, WithStart, type BuilderHost, type Cte, type Selection } from "./builder/query.ts";
+import { DeleteBuilder, InsertBuilder, Runnable, SelectStart, UpdateStart, WithStart, type BuilderHost, type Cte, type Selection } from "./builder/query.ts";
 
 export type LogOption = boolean | "query" | ((event: QueryEvent) => void);
 
@@ -101,6 +101,12 @@ class TransactionScope implements Queryable {
 
   executeBatch(sql: string, rows: readonly (readonly unknown[])[]): Promise<number> {
     return this.#track(() => this.#q.executeBatch(sql, rows));
+  }
+
+  get executeBatchCounts(): Queryable["executeBatchCounts"] {
+    const inner = this.#q;
+    if (!inner.executeBatchCounts) return undefined;
+    return (sql, rows) => this.#track(() => inner.executeBatchCounts!(sql, rows));
   }
 
   close(reason: TransactionError): void {
@@ -441,6 +447,49 @@ export class BaseClient {
       select: (fields) => new SelectStart(host, fields, false, ctes),
       selectDistinct: (fields) => new SelectStart(host, fields, true, ctes),
     };
+  }
+
+  /**
+   * Runs the items in order on one connection inside one transaction and resolves with their
+   * results as a tuple. Consecutive builder `update` / `delete` statements with the same SQL text
+   * (e.g. the same update for many rows) are sent as one batch, i.e. one round trip.
+   * Items: model queries, raw queries and builders, passed without awaiting them.
+   */
+  $batch<const P extends readonly PromiseLike<unknown>[]>(items: P, options?: TransactionOptions): Promise<{ -readonly [K in keyof P]: Awaited<P[K]> }> {
+    const bad = items.findIndex((q) => !(q instanceof QueryPromise) && !(q instanceof Runnable));
+    if (bad >= 0) return Promise.reject(new ValidationError(`$batch([...]) expects queries or builders of this client; item ${bad} is not one (pass them without awaiting them).`));
+    return this.$transaction(async (tx) => {
+      const results: unknown[] = new Array(items.length);
+      const q = (tx as unknown as { _tx: Queryable })._tx;
+      let i = 0;
+      while (i < items.length) {
+        const item = items[i]!;
+        if (item instanceof Runnable && item.batchable) {
+          const first = item.toSQL();
+          let j = i + 1;
+          const params = [first.params];
+          while (j < items.length) {
+            const next = items[j]!;
+            if (!(next instanceof Runnable) || !next.batchable) break;
+            const s = next.toSQL();
+            if (s.sql !== first.sql) break;
+            params.push(s.params);
+            j++;
+          }
+          if (params.length > 1 && q.executeBatchCounts) {
+            const counts = await q.executeBatchCounts(first.sql, params);
+            counts.forEach((c, k) => (results[i + k] = c));
+          } else {
+            for (let k = 0; k < params.length; k++) results[i + k] = await q.execute(first.sql, params[k]);
+          }
+          i = j;
+          continue;
+        }
+        results[i] = item instanceof QueryPromise ? await item._runOn(tx) : await (item as Runnable<unknown>)._runOn(q);
+        i++;
+      }
+      return results as { -readonly [K in keyof P]: Awaited<P[K]> };
+    }, options);
   }
 
   /** Returns a new client with the extension applied; the original is unchanged. */

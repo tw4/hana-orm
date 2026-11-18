@@ -173,6 +173,23 @@ model Tag {
   `upsert`, `delete`, `deleteMany` work through the join table. `connect` of a row that is already
   linked does nothing. There is no nested `createMany`.
 
+#### Batches
+
+```ts
+const [count, recent, ...updated] = await db.$batch([
+  db.user.count(),
+  db.select({ id: post.id }).from(post).orderBy(desc(post.id)).limit(10),
+  ...changes.map((c) => db.update(post).set({ title: c.title }).where(eq(post.id, c.id))),
+]);
+// [number, { id: number }[], ...number[]]
+```
+
+`$batch` runs the items in order on one connection inside one transaction (a failure rolls
+everything back) and resolves with a typed tuple. Consecutive builder `update`s or `delete`s
+with the same SQL text, like the ones above, are sent as one batch: one round trip, with each
+item's affected row count (-1 if HANA does not report it). Pass the items without awaiting
+them.
+
 #### Bulk inserts
 
 ```ts

@@ -99,14 +99,27 @@ class ConnectionQueryable implements Queryable {
 
   async executeBatch(sql: string, rows: readonly (readonly unknown[])[]): Promise<number> {
     if (!rows.length) return 0;
+    const r = await this.batchRaw(sql, rows);
+    // Per-row counts: a negative value means "succeeded, count unknown"; 0 means no row was written.
+    if (Array.isArray(r)) return r.reduce((a, b) => a + (b >= 0 ? b : 1), 0);
+    return typeof r === "number" ? r : rows.length;
+  }
+
+  async executeBatchCounts(sql: string, rows: readonly (readonly unknown[])[]): Promise<number[]> {
+    if (!rows.length) return [];
+    const r = await this.batchRaw(sql, rows);
+    if (Array.isArray(r) && r.length === rows.length) return r.map((n) => (n >= 0 ? n : -1));
+    // the driver gave only a total: per-row counts are unknown
+    return rows.map(() => -1);
+  }
+
+  /** One prepared statement executed for all rows (one round trip). */
+  private async batchRaw(sql: string, rows: readonly (readonly unknown[])[]): Promise<number | number[] | undefined> {
     const started = performance.now();
     try {
       const stmt = await promisify<HanaStatement>((cb) => this.conn.prepare(sql, cb as (err: Error | null, s: unknown) => void));
       try {
-        const r = await promisify<number | number[] | undefined>((cb) => stmt.execBatch(rows, cb as (err: Error | null, r: unknown) => void));
-        // Per-row counts: a negative value means "succeeded, count unknown"; 0 means no row was written.
-        if (Array.isArray(r)) return r.reduce((a, b) => a + (b >= 0 ? b : 1), 0);
-        return typeof r === "number" ? r : rows.length;
+        return await promisify<number | number[] | undefined>((cb) => stmt.execBatch(rows, cb as (err: Error | null, r: unknown) => void));
       } finally {
         await promisify<void>((cb) => stmt.drop(cb)).catch(() => {});
       }
@@ -223,6 +236,10 @@ export class HanaDriver implements Driver {
 
   executeBatch(sql: string, rows: readonly (readonly unknown[])[]): Promise<number> {
     return this.withConnection((c) => c.executeBatch(sql, rows));
+  }
+
+  executeBatchCounts(sql: string, rows: readonly (readonly unknown[])[]): Promise<number[]> {
+    return this.withConnection((c) => c.executeBatchCounts(sql, rows));
   }
 
   transaction<T>(fn: (tx: Queryable) => Promise<T>, options: TransactionOptions = {}): Promise<T> {
