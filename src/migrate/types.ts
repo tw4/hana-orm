@@ -190,6 +190,7 @@ export function contractDefaultToSql(def: DefaultDef | undefined, columnType: st
     case "autoincrement":
     case "uuid":
     case "cuid":
+    case "sequence":
       return undefined;
     case "now":
       return "CURRENT_UTCTIMESTAMP";

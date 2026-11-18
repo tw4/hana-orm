@@ -1,0 +1,12 @@
+// Json fields for filter tests (issue #9).
+
+datasource db {
+  provider = "hana"
+  schema   = "APP"
+}
+
+model Doc {
+  id   Int   @id
+  data Json
+  meta Json?
+}

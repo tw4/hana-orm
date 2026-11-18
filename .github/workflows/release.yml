@@ -1,0 +1,56 @@
+name: Release
+
+# Publishes to npm when a version tag (v1.2.3 or v1.2.3-beta.1) is pushed.
+# Pre-releases go to the `next` dist-tag, stable versions to `latest`, both with provenance.
+# The GitHub release gets the matching CHANGELOG.md section as its notes.
+#
+# Publishing needs either an npm token in the NPM_TOKEN secret, or npm "trusted publishing"
+# configured for this repository and workflow on npmjs.com (then no token is needed).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub release
+  id-token: write # npm provenance / trusted publishing
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Check the tag and the changelog
+        run: |
+          node scripts/release-notes.ts check "$GITHUB_REF_NAME"
+          node scripts/release-notes.ts notes > release-notes.md
+          echo "DIST_TAG=$(node scripts/release-notes.ts dist-tag)" >> "$GITHUB_ENV"
+
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Publish to npm (${{ env.DIST_TAG }})
+        run: npm publish --provenance --access public --tag "$DIST_TAG" --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: GitHub release
+        run: |
+          flags=""
+          if [ "$DIST_TAG" = "next" ]; then flags="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md $flags
+        env:
+          GH_TOKEN: ${{ github.token }}
