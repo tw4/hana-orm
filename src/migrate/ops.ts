@@ -17,6 +17,8 @@ export type OpKind =
   | "addUnique"
   | "createIndex"
   | "addForeignKey"
+  | "createFulltextIndex"
+  | "dropFulltextIndex"
   | "dropCheck"
   | "addCheck"
   | "createSequence"

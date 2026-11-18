@@ -24,7 +24,7 @@ interface Line {
 }
 
 const FIELD_ATTR_ORDER = ["id", "default", "unique", "updatedAt", "ignore", "relation", "map"];
-const BLOCK_ATTR_ORDER = ["id", "unique", "index", "check", "map", "schema", "ignore"];
+const BLOCK_ATTR_ORDER = ["id", "unique", "index", "fulltext", "check", "map", "schema", "ignore"];
 
 /** Formats schema source. Throws `SchemaError` when the source has syntax errors. */
 export function formatSchema(source: string, file?: string): string {

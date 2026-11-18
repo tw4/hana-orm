@@ -164,6 +164,12 @@ export interface IndexDef {
   fields: string[];
 }
 
+/** One HANA full-text index (`@@fulltext`); HANA indexes one column per full-text index. */
+export interface FulltextIndexDef {
+  dbName: string;
+  field: string;
+}
+
 /** `@@check("SQL", map: "NAME")`: a table check constraint with a raw SQL condition. */
 export interface CheckDef {
   dbName: string;
@@ -183,6 +189,8 @@ export interface ModelDef {
   primaryKey: { name: string; dbName: string; fields: string[] } | null;
   uniques: UniqueDef[];
   indexes: IndexDef[];
+  /** `@@fulltext` indexes, one per column. */
+  fulltext?: FulltextIndexDef[];
   /** `@@check` constraints. */
   checks?: CheckDef[];
   /**

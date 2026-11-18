@@ -96,6 +96,7 @@ export function contractToPhysical(contract: Pick<Contract, "models" | "enums">,
       indexes: model.indexes.map((i) => ({ name: i.dbName, columns: i.fields.map(colName) })),
       foreignKeys: [],
     };
+    if (model.fulltext?.length) table.fulltext = model.fulltext.map((x) => ({ name: x.dbName, column: colName(x.field) }));
     if (model.checks?.length) table.checks = model.checks.map((c) => ({ name: c.dbName, sql: c.sql }));
     if (model.doc && comments) table.comment = model.doc;
     const schema = modelSchema(model, defaultSchema);

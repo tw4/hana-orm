@@ -39,6 +39,12 @@ export interface PhysicalIndex {
   columns: string[];
 }
 
+/** A HANA full-text index on one column. */
+export interface PhysicalFulltextIndex {
+  name: string;
+  column: string;
+}
+
 export interface PhysicalCheck {
   name: string;
   /** Condition as written in the schema or stored in `SYS.CONSTRAINTS.CHECK_CONDITION`. */
@@ -74,6 +80,7 @@ export interface PhysicalTable {
   uniques: PhysicalUnique[];
   indexes: PhysicalIndex[];
   foreignKeys: PhysicalForeignKey[];
+  fulltext?: PhysicalFulltextIndex[];
   checks?: PhysicalCheck[];
   /** `COMMENT ON TABLE` (from `///` on the model). */
   comment?: string;

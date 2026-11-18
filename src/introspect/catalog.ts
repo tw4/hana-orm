@@ -74,6 +74,12 @@ export interface CatalogIndexRow {
   POSITION: number;
 }
 
+export interface CatalogFulltextRow {
+  TABLE_NAME: string;
+  INDEX_NAME: string;
+  COLUMN_NAME: string;
+}
+
 export interface CatalogViewRow {
   VIEW_NAME: string;
 }
@@ -94,6 +100,7 @@ export interface CatalogRows {
   constraints: CatalogConstraintRow[];
   foreignKeys: CatalogFkRow[];
   indexes: CatalogIndexRow[];
+  fulltext?: CatalogFulltextRow[];
   checks?: CatalogCheckRow[];
   sequences?: CatalogSequenceRow[];
   views?: CatalogViewRow[];
@@ -116,6 +123,7 @@ export const CATALOG_SQL = {
     "SELECT i.TABLE_NAME, i.INDEX_NAME, c.COLUMN_NAME, c.POSITION FROM SYS.INDEXES i " +
     "JOIN SYS.INDEX_COLUMNS c ON c.INDEX_OID = i.INDEX_OID " +
     "WHERE i.SCHEMA_NAME = ? AND i.CONSTRAINT IS NULL ORDER BY i.TABLE_NAME, i.INDEX_NAME, c.POSITION",
+  fulltext: "SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME FROM SYS.FULLTEXT_INDEXES WHERE SCHEMA_NAME = ? ORDER BY TABLE_NAME, INDEX_NAME",
   checks:
     "SELECT DISTINCT TABLE_NAME, CONSTRAINT_NAME, CHECK_CONDITION FROM SYS.CONSTRAINTS " +
     "WHERE SCHEMA_NAME = ? AND CHECK_CONDITION IS NOT NULL ORDER BY TABLE_NAME, CONSTRAINT_NAME",
@@ -135,6 +143,7 @@ export async function readCatalog(db: Queryable, schema: string, includeViews: b
     constraints: await db.query<CatalogConstraintRow>(CATALOG_SQL.constraints, p),
     foreignKeys: await db.query<CatalogFkRow>(CATALOG_SQL.foreignKeys, p),
     indexes: await db.query<CatalogIndexRow>(CATALOG_SQL.indexes, p),
+    fulltext: await db.query<CatalogFulltextRow>(CATALOG_SQL.fulltext, p),
     checks: await db.query<CatalogCheckRow>(CATALOG_SQL.checks, p),
   };
   if (includeSequences) rows.sequences = await db.query<CatalogSequenceRow>(CATALOG_SQL.sequences, p);
@@ -193,6 +202,7 @@ export function buildPhysicalFromCatalog(rows: CatalogRows, options: BuildOption
   const constraints = groupBy(rows.constraints, (r) => r.TABLE_NAME);
   const fks = groupBy(rows.foreignKeys, (r) => r.TABLE_NAME);
   const indexes = groupBy(rows.indexes, (r) => r.TABLE_NAME);
+  const fulltext = groupBy(rows.fulltext ?? [], (r) => r.TABLE_NAME);
   const checks = groupBy(rows.checks ?? [], (r) => r.TABLE_NAME);
 
   for (const t of rows.tables) {
@@ -218,9 +228,14 @@ export function buildPhysicalFromCatalog(rows: CatalogRows, options: BuildOption
       if (list[0]!.IS_PRIMARY_KEY === "TRUE") table.primaryKey = { name, columns: cs };
       else if (list[0]!.IS_UNIQUE_KEY === "TRUE") table.uniques.push({ name, columns: cs });
     }
+    const ftRows = fulltext.get(t.TABLE_NAME) ?? [];
+    const ftNames = new Set(ftRows.map((r) => r.INDEX_NAME));
     for (const [name, list] of groupBy(indexes.get(t.TABLE_NAME) ?? [], (r) => r.INDEX_NAME)) {
+      // a full-text index may also be listed in SYS.INDEXES
+      if (ftNames.has(name)) continue;
       table.indexes.push({ name, columns: list.sort(byPos).map((r) => r.COLUMN_NAME) });
     }
+    for (const r of ftRows) (table.fulltext ??= []).push({ name: r.INDEX_NAME, column: r.COLUMN_NAME });
     for (const [name, list] of groupBy(fks.get(t.TABLE_NAME) ?? [], (r) => r.CONSTRAINT_NAME)) {
       const sorted = list.sort(byPos);
       const first = sorted[0]!;

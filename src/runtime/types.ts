@@ -32,6 +32,8 @@ export interface NullableFilter<T> {
 }
 
 export interface StringFilter extends Omit<Filter<string>, "not"> {
+  /** Full-text search, `CONTAINS(column, search)` in HANA's search syntax (`hana orm`, `"exact phrase"`, `hana OR orm`, `-legacy`). */
+  search?: string;
   contains?: string;
   startsWith?: string;
   endsWith?: string;
@@ -40,6 +42,8 @@ export interface StringFilter extends Omit<Filter<string>, "not"> {
 }
 
 export interface StringNullableFilter extends Omit<NullableFilter<string>, "not"> {
+  /** Full-text search, `CONTAINS(column, search)` in HANA's search syntax. */
+  search?: string;
   contains?: string;
   startsWith?: string;
   endsWith?: string;
