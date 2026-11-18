@@ -8,6 +8,7 @@ import { quoteIdent, tableRef } from "../sql.ts";
 import type { Simplify } from "../types.ts";
 import { Column, Param, SQL, TABLE, decodeColumn, isTable, type InsertOf, type Renderable, type RenderContext, type RowOf, type SourceMeta } from "./core.ts";
 import type { SubqueryLike } from "./ops.ts";
+import { fillParams, Prepared, slotNames } from "../prepared.ts";
 
 /** What a builder needs from the client that runs it. */
 export interface BuilderHost {
@@ -89,7 +90,18 @@ interface SelectState {
 const clone = (s: SelectState, changes: Partial<SelectState>): SelectState => ({ ...s, ...changes });
 
 /** Common part: rendering and running. */
-abstract class Runnable<R> implements PromiseLike<R> {
+export abstract class Runnable<R> implements PromiseLike<R> {
+  /** A plain statement whose result is its affected row count: `$batch` may send several as one batch. */
+  get batchable(): boolean {
+    return false;
+  }
+
+  /** @internal Runs on `q` (a transaction's connection in `$batch`). */
+  _runOn(q: Queryable): Promise<R> {
+    const { sql, params } = this.toSQL();
+    return this.run(q, sql, params);
+  }
+
   protected readonly host: BuilderHost;
   constructor(host: BuilderHost) {
     this.host = host;
@@ -103,6 +115,16 @@ abstract class Runnable<R> implements PromiseLike<R> {
     const ctx: RenderContext = { contract: this.host.contract, defaultSchema: this.host.defaultSchema, params: [] };
     const text = this.render(ctx);
     return { sql: text, params: ctx.params };
+  }
+
+  /**
+   * Compiles the statement once; `execute({ name: value })` runs it with the values of its
+   * `placeholder("name")`s.
+   */
+  prepare(): Prepared<R> {
+    const { sql, params } = this.toSQL();
+    const contract = this.host.contract;
+    return new Prepared<R>((w, fn) => this.host.run(w, fn), this.write, sql, slotNames(params), (values, q) => this.run(q, sql, fillParams(contract, params, values)));
   }
 
   /** Runs the statement (also on `await`). */
@@ -345,11 +367,32 @@ export class InsertBuilder<Row> {
     this.#host = host;
     this.#model = modelOf(table, "insert()");
   }
-  values(rows: Row | Row[]): PromiseLike<number> {
-    const list = (Array.isArray(rows) ? rows : [rows]) as Record<string, unknown>[];
-    const host = this.#host;
-    const model = this.#model;
-    return { then: (ok, fail) => host.run(true, (q) => host.createMany(model, list, q)).then(ok, fail) };
+  values(rows: Row | Row[]): InsertValues {
+    return new InsertValues(this.#host, this.#model, (Array.isArray(rows) ? rows : [rows]) as Record<string, unknown>[]);
+  }
+}
+
+/** The rows of an insert; runs through the object API's `createMany` (batched by column set). */
+export class InsertValues extends Runnable<number> {
+  protected readonly write = true;
+  readonly #model: ModelDef;
+  readonly #rows: Record<string, unknown>[];
+  constructor(host: BuilderHost, model: ModelDef, rows: Record<string, unknown>[]) {
+    super(host);
+    this.#model = model;
+    this.#rows = rows;
+  }
+  render(): string {
+    throw new ValidationError("insert() runs through createMany and has no single SQL text");
+  }
+  protected run(): Promise<number> {
+    throw new ValidationError("insert() runs through createMany");
+  }
+  override execute(): Promise<number> {
+    return this.host.run(true, (q) => this._runOn(q));
+  }
+  override _runOn(q: Queryable): Promise<number> {
+    return this.host.createMany(this.#model, this.#rows, q);
   }
 }
 
@@ -370,6 +413,9 @@ export class UpdateStart<T> {
 
 export class UpdateBuilder extends Runnable<number> {
   protected readonly write = true;
+  override get batchable(): boolean {
+    return true;
+  }
   readonly #table: TableOf;
   readonly #values: Record<string, unknown>;
   readonly #where: SQL<unknown> | undefined;
@@ -406,6 +452,9 @@ export class UpdateBuilder extends Runnable<number> {
 
 export class DeleteBuilder extends Runnable<number> {
   protected readonly write = true;
+  override get batchable(): boolean {
+    return true;
+  }
   readonly #table: TableOf;
   readonly #where: SQL<unknown> | undefined;
   constructor(host: BuilderHost, table: TableOf, where: SQL<unknown> | undefined = undefined) {

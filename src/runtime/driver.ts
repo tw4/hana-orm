@@ -9,6 +9,11 @@ export interface Queryable {
   execute(sql: string, params?: readonly unknown[]): Promise<number>;
   /** Runs one statement for many parameter rows (batch insert). Returns the total affected rows. */
   executeBatch(sql: string, rows: readonly (readonly unknown[])[]): Promise<number>;
+  /**
+   * Like `executeBatch`, but returns the affected row count of each parameter row (-1 when the
+   * database does not report it). Optional; `$batch` runs the rows one by one without it.
+   */
+  executeBatchCounts?(sql: string, rows: readonly (readonly unknown[])[]): Promise<number[]>;
 }
 
 export type IsolationLevel = "READ COMMITTED" | "REPEATABLE READ" | "SERIALIZABLE";

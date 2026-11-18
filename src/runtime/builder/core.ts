@@ -12,12 +12,18 @@ import { columnFields } from "../../schema/contract.ts";
 import { decodeValue, encodeValue, formatTimestamp } from "../codec.ts";
 import { ValidationError } from "../errors.ts";
 import { quoteIdent, tableRef } from "../sql.ts";
+import { Placeholder, PlaceholderSlot } from "../placeholder.ts";
 
 /** What rendering needs from the client. */
 export interface RenderContext {
   contract: Contract;
   defaultSchema: string | undefined;
   params: unknown[];
+  /**
+   * Set when an `sql` fragment is embedded in an object-API query: table name → the alias the
+   * query uses for it. Columns of other tables are rejected.
+   */
+  aliases?: ReadonlyMap<string, string>;
 }
 
 /** Anything that renders to SQL text. */
@@ -43,6 +49,7 @@ export class Param implements Renderable {
 
 /** Driver value for an untyped parameter (same rules as `$queryRaw`). */
 export function rawValue(v: unknown): unknown {
+  if (v instanceof Placeholder) return new PlaceholderSlot(v.name, undefined);
   if (v instanceof Date) return formatTimestamp(v);
   if (typeof v === "bigint") return v.toString();
   return v;
@@ -98,6 +105,11 @@ export function sql<T = unknown>(strings: TemplateStringsArray, ...values: unkno
   return new SQL<T>(chunks);
 }
 sql.raw = (text: string): SQL<unknown> => new SQL([text]);
+/** A quoted identifier (`"MY_COLUMN"`, `"SCHEMA"."TABLE"` for several parts); quotes inside are escaped. */
+sql.identifier = (...parts: string[]): SQL<unknown> => {
+  if (!parts.length || parts.some((p) => typeof p !== "string" || !p)) throw new ValidationError("sql.identifier() takes non-empty names");
+  return new SQL([parts.map(quoteIdent).join(".")]);
+};
 /** Joins fragments with a separator: `sql.join([a, b], sql\`, \`)`. */
 sql.join = (parts: readonly unknown[], separator: SQL | string = ", "): SQL<unknown> => {
   const chunks: (string | Renderable)[] = [];
@@ -141,7 +153,14 @@ export class Column<T, TableName extends string = string> implements Renderable 
     this.field = field;
     this.decoder = decoder;
   }
-  render(): string {
+  render(ctx?: RenderContext): string {
+    if (ctx?.aliases) {
+      const a = ctx.aliases.get(this.sourceAlias);
+      if (a === undefined) {
+        throw new ValidationError(`Column '${this.sourceAlias}.${this.name}' cannot be used here; only columns of ${[...ctx.aliases.keys()].map((k) => `'${k}'`).join(", ")} are in this query`);
+      }
+      return `${a}.${quoteIdent(this.dbName)}`;
+    }
     return `${quoteIdent(this.sourceAlias)}.${quoteIdent(this.dbName)}`;
   }
 }
