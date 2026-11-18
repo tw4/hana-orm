@@ -7,6 +7,7 @@ import type { Driver, IsolationLevel, QueryEvent, Queryable } from "./driver.ts"
 import { Engine } from "./engine.ts";
 import { NotFoundError, TransactionError, ValidationError } from "./errors.ts";
 import { HanaDriver, type ConnectionConfig } from "./hana-driver.ts";
+import { ROW_OPERATIONS, applyComputed, prepareArgs, validateComputed, type ComputedField, type ComputedFields } from "./computed.ts";
 import { InstrumentedDriver, Observer, type ClientEventName, type ClientEvents, type ClientMetrics, type StatsDriver } from "./events.ts";
 
 /**
@@ -187,6 +188,11 @@ export interface ExtensionArgs {
   query?: Record<string, Record<string, (params: QueryExtensionParams) => Promise<any>>>;
   /** Extra methods on the client itself. */
   client?: Record<string, AnyFn>;
+  /**
+   * Computed fields: `{ user: { fullName: { needs: { firstName: true, lastName: true }, compute: (u) => ... } } }`.
+   * The needed fields are fetched automatically; `select` / `omit` accept the computed names.
+   */
+  result?: Record<string, Record<string, ComputedField>>;
 }
 
 export const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -277,6 +283,10 @@ export class BaseClient {
   _delegate(model: ModelDef): Record<string, AnyFn> {
     const delegate: Record<string, AnyFn> = {};
     const key = lowerFirst(model.name);
+    const computed: ComputedFields = new Map();
+    for (const ext of this._extensions) {
+      for (const [name, def] of Object.entries(ext.result?.[key] ?? {})) computed.set(name, validateComputed(model, name, def));
+    }
     for (const op of OPERATIONS) {
       const base = (args: any) => this._execute(model, op, args);
       // Wrap with query extensions, innermost = first registered.
@@ -287,6 +297,15 @@ export class BaseClient {
           const next = call;
           call = (args: any) => hook({ model: model.name, operation: op, args, query: next });
         }
+      }
+      if (computed.size && ROW_OPERATIONS.has(op)) {
+        // outermost: query hooks see arguments without computed names
+        const inner = call;
+        call = async (args: any) => {
+          const omitted = this._engine().globalOmit.get(model.name) ?? {};
+          const prepared = prepareArgs(args ?? {}, computed, new Set(Object.keys(omitted).filter((k) => omitted[k])));
+          return applyComputed(await inner(prepared.args), prepared);
+        };
       }
       // Lazy: runs when awaited, or inside $transaction([...]) on the transaction client.
       delegate[op] = (args?: any) =>

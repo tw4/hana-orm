@@ -136,3 +136,41 @@ export type GroupByPayload<M, A> = A extends { by: infer B }
 export interface BatchPayload {
   count: number;
 }
+
+// ---- result extensions (computed fields) ----------------------------------------------
+
+/** `select` / `omit` entries for the computed fields `R`. */
+export type ComputedKeys<R> = { [K in keyof R]?: boolean };
+
+/** Args type `T` whose `select` and `omit` also accept the computed fields `R`. */
+export type ArgsWithComputed<T, R> = [keyof R] extends [never] ? T : T & { select?: ComputedKeys<R> | null; omit?: ComputedKeys<R> | null };
+
+/** `A` without computed names in `select` / `omit` (they are not model fields). */
+export type StripComputed<A, R> = [keyof R] extends [never]
+  ? A
+  : { [P in keyof A]: P extends "select" | "omit" ? (A[P] extends object ? Omit<A[P], keyof R> : A[P]) : A[P] };
+
+type ComputedPick<R, A> = A extends { select: infer S }
+  ? S extends object
+    ? { [K in keyof R as K extends SelectedKeys<S> ? K : never]: R[K] }
+    : R
+  : A extends { omit: infer O }
+    ? O extends object
+      ? { [K in keyof R as K extends TrueKeys<O> ? never : K]: R[K] }
+      : R
+    : R;
+
+/** Payload `P` plus the computed fields `R` that the args `A` select (all unless `select` / `omit` say otherwise). */
+export type WithComputed<P, R, A> = [keyof R] extends [never] ? P : P extends object ? Simplify<P & ComputedPick<R, A>> : P;
+
+/** Value types of model `K`'s computed fields in the extension `E`. */
+export type ComputedOf<E, K extends string> = E extends { result: infer RR }
+  ? RR extends Record<string, unknown>
+    ? K extends keyof RR
+      ? { [F in keyof RR[K]]: RR[K][F] extends { compute: (...args: any[]) => infer V } ? V : never }
+      : {}
+    : {}
+  : {};
+
+/** Computed fields a delegate type already has (from earlier `$extends` calls). */
+export type PrevComputed<C, K extends string> = C extends { readonly [P in K]: { readonly $computed?: infer R } } ? NonNullable<R> : {};
