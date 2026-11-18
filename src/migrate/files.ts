@@ -19,7 +19,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Contract } from "../schema/contract.ts";
 import { CONTRACT_VERSION } from "../schema/contract.ts";
-import type { MigrationOp, OpsFile } from "./ops.ts";
+import type { MigrationOp, OpsFile, ReplacedMigration } from "./ops.ts";
 import { OPS_FORMAT_VERSION, opsToSql } from "./ops.ts";
 
 export const OPS_FILE = "ops.json";
@@ -43,10 +43,15 @@ export interface ContractSnapshot {
   hash: string;
   models: Contract["models"];
   enums: Contract["enums"];
+  /**
+   * The migrations up to this one manage `///` comments as database comments. Snapshots
+   * written before comment support lack it: their docs were never applied to the database.
+   */
+  comments?: true;
 }
 
 export function toSnapshot(contract: Pick<Contract, "hash" | "models" | "enums">): ContractSnapshot {
-  return { version: CONTRACT_VERSION, hash: contract.hash, models: contract.models, enums: contract.enums };
+  return { version: CONTRACT_VERSION, hash: contract.hash, models: contract.models, enums: contract.enums, comments: true };
 }
 
 /** `YYYYMMDDHHmmss` in UTC. */
@@ -91,7 +96,7 @@ export function computeChecksum(opsJson: string, files: Record<string, string> =
   return h.digest("hex");
 }
 
-function referencedFiles(ops: readonly MigrationOp[]): string[] {
+export function referencedFiles(ops: readonly MigrationOp[]): string[] {
   return [...new Set(ops.filter((o) => (o.kind === "sqlFile" || o.kind === "script") && o.file).map((o) => o.file!))];
 }
 
@@ -145,6 +150,7 @@ export interface NewMigration {
   from: string | null;
   to: string;
   ops: MigrationOp[];
+  replaces?: ReplacedMigration[];
   snapshot: ContractSnapshot;
   /** Contents for `migration.sql` when it is the executable file of an empty migration. */
   handWrittenSql?: string;
@@ -152,8 +158,8 @@ export interface NewMigration {
   extraFiles?: Record<string, string>;
 }
 
-export function buildOpsFile(m: Pick<NewMigration, "id" | "name" | "from" | "to" | "ops">): OpsFile {
-  return { formatVersion: OPS_FORMAT_VERSION, id: m.id, name: m.name, from: m.from, to: m.to, ops: m.ops };
+export function buildOpsFile(m: Pick<NewMigration, "id" | "name" | "from" | "to" | "ops" | "replaces">): OpsFile {
+  return { formatVersion: OPS_FORMAT_VERSION, id: m.id, name: m.name, from: m.from, to: m.to, ops: m.ops, ...(m.replaces?.length ? { replaces: m.replaces } : {}) };
 }
 
 export function serializeOps(ops: OpsFile): string {

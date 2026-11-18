@@ -117,6 +117,15 @@ function isSystemName(name: string | undefined): boolean {
   return !name || name.startsWith("_SYS_") || /^SYS_/.test(name);
 }
 
+/** Re-renders `sequence("SEQ", start: 1, increment: 1)` from an existing schema. */
+function sequenceCall(v: Extract<Value, { kind: "call" }>): string {
+  const args = v.args.map((a) => {
+    const text = a.value.kind === "string" ? quoteString(a.value.value) : a.value.kind === "number" ? String(a.value.value) : "";
+    return a.name ? `${a.name}: ${text}` : text;
+  });
+  return `sequence(${args.join(", ")})`;
+}
+
 function mapArg(name: string | undefined, prefix: string, table: string, columns: string[]): string {
   if (!name || isSystemName(name) || name === defaultConstraintName(prefix, table, columns)) return "";
   return `map: ${quoteString(name)}`;
@@ -355,6 +364,8 @@ function buildColumns(plan: ModelPlan, enums: Map<string, { name: string; dbName
     if (!dflt && ex) {
       const exDefault = attr(ex.decl.attributes, "default")?.args[0]?.value;
       if (exDefault?.kind === "call" && (exDefault.name === "uuid" || exDefault.name === "cuid")) dflt = `${exDefault.name}()`;
+      // sequences are filled by INSERTs, not by a column default, so the catalog cannot show them
+      if (exDefault?.kind === "call" && exDefault.name === "sequence" && (mapped.scalar === "Int" || mapped.scalar === "BigInt")) dflt = sequenceCall(exDefault);
     }
     if (dflt) attrs.push(`@default(${dflt})`);
     const uq = table?.uniques.find((u) => single(u.columns));
@@ -367,7 +378,9 @@ function buildColumns(plan: ModelPlan, enums: Map<string, { name: string; dbName
     if (name !== col.name) attrs.push(`@map(${quoteString(col.name)})`);
     if (native) attrs.push(`@${native}`);
     const optional = col.nullable && !(pk && pk.columns.includes(col.name));
-    plan.lines.push({ name, type: `${type}${optional ? "?" : ""}`, attrs, ...(ex?.decl.doc ? { doc: ex.decl.doc } : {}) });
+    // the column comment is what the database has; an existing /// is kept when there is none
+    const doc = ("comment" in col ? col.comment : undefined) ?? ex?.decl.doc;
+    plan.lines.push({ name, type: `${type}${optional ? "?" : ""}`, attrs, ...(doc ? { doc } : {}) });
   }
 
   if (table) {
@@ -402,6 +415,20 @@ function buildColumns(plan: ModelPlan, enums: Map<string, { name: string; dbName
       const m = mapArg(i.name, "IX", t.name, i.columns);
       plan.blockAttrs.push(`@@index(${f}${m ? `, ${m}` : ""})`);
     }
+    for (const x of [...(table.fulltext ?? [])].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const f = fieldsOf([x.column]);
+      if (!f) {
+        warnings.push(`Full-text index '${x.name}' on '${plan.key}' uses an unsupported column; it was left out.`);
+        continue;
+      }
+      const m = mapArg(x.name, "FTI", t.name, [x.column]);
+      plan.blockAttrs.push(`@@fulltext(${f}${m ? `, ${m}` : ""})`);
+    }
+    // conditions are raw SQL and are written as stored; unnamed (system) checks get the default name
+    (table.checks ?? []).forEach((c, i) => {
+      const m = mapArg(c.name, "CK", t.name, [String(i + 1)]);
+      plan.blockAttrs.push(`@@check(${quoteString(c.sql)}${m ? `, ${m}` : ""})`);
+    });
   }
 }
 
@@ -625,7 +652,7 @@ function renderModel(plan: ModelPlan, defaultSchema: string): string {
   if (schema && schema !== defaultSchema) block.push(`@@schema(${quoteString(schema)})`);
   if (modelIgnored(plan)) block.push("@@ignore");
   const head: string[] = [];
-  const doc = plan.existing?.decl.doc ?? ("comment" in t && t.comment ? t.comment : undefined);
+  const doc = ("comment" in t && t.comment ? t.comment : undefined) ?? plan.existing?.decl.doc;
   if (plan.kind === "model" && !(t as PhysicalTable).primaryKey) head.push("// This table has no primary key; the client treats it as read-only.");
   const parts = [`${head.length ? `${head.join("\n")}\n` : ""}${docText(doc)}${plan.kind} ${plan.name} {`, ...body];
   if (block.length) {

@@ -59,7 +59,12 @@ async function introspectFor(db: Driver, other: Model | null, otherPhys: Physica
   if (!other || !Object.keys(otherPhys.tables).length) {
     return introspect(db, { schemas: [defaultSchema], defaultSchema, filter: (name) => !INTERNAL_TABLE.test(name) });
   }
-  return introspect(db, { schemas: contractSchemas(other, defaultSchema), defaultSchema, onlyTables: new Set(Object.keys(otherPhys.tables)) });
+  return introspect(db, {
+    schemas: contractSchemas(other, defaultSchema),
+    defaultSchema,
+    onlyTables: new Set(Object.keys(otherPhys.tables)),
+    onlySequences: new Set(Object.keys(otherPhys.sequences ?? {})),
+  });
 }
 
 export interface DiffOutcome {
