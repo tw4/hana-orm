@@ -17,6 +17,13 @@ export type OpKind =
   | "addUnique"
   | "createIndex"
   | "addForeignKey"
+  | "dropCheck"
+  | "addCheck"
+  | "createSequence"
+  | "alterSequence"
+  | "dropSequence"
+  /** `COMMENT ON TABLE` / `COMMENT ON COLUMN` (from `///` doc comments). */
+  | "setComment"
   /** Hand-written SQL read from a file in the migration folder (`migrate plan --empty`). */
   | "sqlFile"
   /** A TypeScript/JavaScript data migration in the migration folder (`migrate plan --script`). */
