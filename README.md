@@ -318,6 +318,12 @@ npm test                    # unit + type tests, no database needed
 npm run test:integration    # needs HANA_* env vars; writes only to temporary tables
 ```
 
+`docker-compose.hana.yml` starts a local SAP HANA Express for the integration tests (see the
+comments in the file). The **HANA integration** workflow does the same in CI every night and
+on demand (Actions → HANA integration → Run workflow, optionally on a larger or self-hosted
+runner): it starts HANA Express, checks the connection with `node scripts/check-hana.ts` and
+runs `npm run test:integration` with `HANA_ORM_ALLOW_DDL=1`, failing if any test was skipped.
+
 ## License
 
 [Apache License 2.0](LICENSE)
