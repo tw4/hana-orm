@@ -6,6 +6,7 @@ import type { Driver, IsolationLevel, QueryEvent, Queryable } from "./driver.ts"
 import { Engine } from "./engine.ts";
 import { NotFoundError, TransactionError, ValidationError } from "./errors.ts";
 import { HanaDriver, type ConnectionConfig } from "./hana-driver.ts";
+import { decodeTypedRow, type TypedSql } from "./typed-sql.ts";
 
 export type LogOption = boolean | "query" | ((event: QueryEvent) => void);
 
@@ -387,6 +388,18 @@ export class BaseClient {
   /** Raw DML/DDL with `?` placeholders. Never build `sql` from user input. */
   $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number> {
     return new QueryPromise((client) => (client ? client.$executeRawUnsafe(sql, ...params) : this._run(false, (q) => q.execute(sql, params.map(rawParam)))));
+  }
+
+  /**
+   * Runs a query generated from a `.sql` file (`hana-orm generate --sql`) and returns rows
+   * typed and decoded by the column types HANA reported.
+   */
+  $queryRawTyped<R>(query: TypedSql<R>): Promise<R[]> {
+    return new QueryPromise((client) =>
+      client
+        ? client.$queryRawTyped(query)
+        : this._run(false, async (q) => (await q.query<Record<string, unknown>>(query.sql, query.params.map(rawParam))).map((r) => decodeTypedRow(r, query.columns) as R)),
+    );
   }
 
   /** Returns a new client with the extension applied; the original is unchanged. */

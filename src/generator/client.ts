@@ -315,6 +315,8 @@ export function generateClient(fullContract: Contract, options: GenerateOptions 
   out.push(`  $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number>;`);
   out.push(`  $queryRawUnsafe<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;`);
   out.push(`  $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number>;`);
+  out.push(`  /** Runs a query generated from a .sql file (\`hana-orm generate --sql\`). */`);
+  out.push(`  $queryRawTyped<R>(query: $r.TypedSql<R>): Promise<R[]>;`);
   out.push("}", "");
   out.push(`export interface ${C}<G = {}> extends ${C}Transaction<G> {`);
   out.push(`  $connect(): Promise<void>;`);

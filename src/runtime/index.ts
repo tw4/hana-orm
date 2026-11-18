@@ -4,4 +4,6 @@ export type { Driver, IsolationLevel, Queryable, QueryEvent, TransactionOptions 
 export { DatabaseError, HanaOrmError, NotFoundError, TransactionError, ValidationError, type TransactionErrorCode } from "./errors.ts";
 export { resolveConnectionConfig, parseHanaUrl } from "./config.ts";
 export type { Contract } from "../schema/contract.ts";
+export { typedSql, decodeTypedRow, sqlColumnKind } from "./typed-sql.ts";
+export type { SqlColumnKind, TypedSql } from "./typed-sql.ts";
 export type * from "./types.ts";

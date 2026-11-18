@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import type { Driver, QueryEvent, Queryable, TransactionOptions } from "./driver.ts";
 import { DatabaseError, TransactionError } from "./errors.ts";
+import { describeFromHanaMetadata, type StatementDescription } from "./typed-sql.ts";
 
 export interface ConnectionConfig {
   host: string;
@@ -29,6 +30,8 @@ export interface HanaDriverOptions {
 // Minimal shape of @sap/hana-client we rely on.
 interface HanaStatement {
   execBatch(rows: unknown, cb: (err: Error | null, result: unknown) => void): void;
+  getColumnInfo?(): unknown;
+  getParameterInfo?(): unknown;
   drop(cb: (err: Error | null) => void): void;
 }
 interface HanaConnection {
@@ -242,6 +245,27 @@ export class HanaDriver implements Driver {
         c.conn.setAutoCommit(true);
       }
     }, options.maxWait);
+  }
+
+  /**
+   * Prepares `sql` without running it and returns its result columns and parameters
+   * (`hana-orm generate --sql`).
+   */
+  describe(sql: string): Promise<StatementDescription> {
+    return this.withConnection(async (c) => {
+      let stmt: HanaStatement;
+      try {
+        stmt = await promisify<HanaStatement>((cb) => c.conn.prepare(sql, cb as (err: Error | null, s: unknown) => void));
+      } catch (e) {
+        throw new DatabaseError(e, sql);
+      }
+      try {
+        if (typeof stmt.getColumnInfo !== "function") throw new Error("This @sap/hana-client version cannot describe statements (no getColumnInfo)");
+        return describeFromHanaMetadata(stmt.getColumnInfo(), typeof stmt.getParameterInfo === "function" ? stmt.getParameterInfo() : []);
+      } finally {
+        await promisify<void>((cb) => stmt.drop(cb)).catch(() => {});
+      }
+    });
   }
 
   async close(): Promise<void> {
