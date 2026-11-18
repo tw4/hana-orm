@@ -60,7 +60,12 @@ export type DefaultDef =
   | { kind: "cuid" }
   | { kind: "value"; value: string | number | boolean }
   /** Raw SQL expression used in DDL; the runtime leaves the column out of INSERTs. */
-  | { kind: "dbgenerated"; sql: string };
+  | { kind: "dbgenerated"; sql: string }
+  /**
+   * `sequence("SEQ", start: 1, increment: 1)`: INSERTs take `"SEQ".NEXTVAL`. The sequence lives
+   * in the model's schema and is created by migrations (HANA has no sequence column defaults).
+   */
+  | { kind: "sequence"; name: string; start?: number; increment?: number };
 
 export interface ScalarFieldDef {
   kind: "scalar";
@@ -159,6 +164,12 @@ export interface IndexDef {
   fields: string[];
 }
 
+/** `@@check("SQL", map: "NAME")`: a table check constraint with a raw SQL condition. */
+export interface CheckDef {
+  dbName: string;
+  sql: string;
+}
+
 export interface ModelDef {
   name: string;
   /** Table (or view) name (`@@map`, defaults to `name`). */
@@ -172,6 +183,8 @@ export interface ModelDef {
   primaryKey: { name: string; dbName: string; fields: string[] } | null;
   uniques: UniqueDef[];
   indexes: IndexDef[];
+  /** `@@check` constraints. */
+  checks?: CheckDef[];
   /**
    * Columns declared as `Unsupported("TYPE")`: not exposed in the client, but kept so
    * migrations and drift detection know the column exists.
