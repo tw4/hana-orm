@@ -20,6 +20,8 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
   prepared queries with placeholders (#30), `$batch` (#32), schema definitions in TypeScript (#29).
 - CI: nightly HANA Express integration tests (#33) and benchmarks against the raw driver (#39);
   release workflow publishing to npm with `next` / `latest` tags (#38).
+- `hana-orm studio`: a local web page to browse, filter and edit the data of every model, with
+  foreign-key navigation and a `--read-only` mode (#37).
 
 ### Fixed
 

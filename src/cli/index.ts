@@ -14,6 +14,8 @@ import { loadDotEnv, resolveConnectionConfig, resolveDefaultSchema } from "../ru
 import { HanaDriver } from "../runtime/hana-driver.ts";
 import type { CliContext, ParsedArgs } from "./context.ts";
 import { DB_MIGRATE_HELP, runDbOrMigrateCommand } from "../migrate/cli.ts";
+import { createClientClass } from "../runtime/client.ts";
+import { createStudio, type StudioClient } from "../studio/server.ts";
 
 const VERSION = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -30,6 +32,9 @@ Commands
   validate             Check the schema for errors
   format [--check]     Format the schema file(s) in place: aligned columns, attribute order,
                        spacing. --check only lists files that are not formatted (exit 1).
+  studio [--port 5555] [--host 127.0.0.1] [--read-only]
+                       Browse and edit the database's data in a local web UI. Prints a URL
+                       with a one-time access token; Ctrl+C stops it.
   version              Print the version
 ${DB_MIGRATE_HELP}
 Global options
@@ -54,7 +59,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 // Flags that never take a value, so `--watch schema.hana` is not misread.
-const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes", "check", "allow-remote", "schema-drop", "skip-seed", "script", "ts", "exit-code", "stdin"]);
+const BOOLEAN_FLAGS = new Set(["watch", "help", "dry-run", "allow-destructive", "print", "empty", "views", "force", "yes", "check", "allow-remote", "schema-drop", "skip-seed", "script", "ts", "exit-code", "stdin", "read-only"]);
 
 function normalizeFlags(args: ParsedArgs): ParsedArgs {
   for (const [k, v] of Object.entries(args.flags)) {
@@ -283,6 +288,36 @@ async function cmdValidate(ctx: CliContext): Promise<number> {
   return 0;
 }
 
+async function cmdStudio(ctx: CliContext, args: ParsedArgs): Promise<number> {
+  const port = args.flags.port === undefined ? 5555 : Number(args.flags.port);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port expects a port number");
+  const host = typeof args.flags.host === "string" ? args.flags.host : "127.0.0.1";
+  const contract = await ctx.loadContract();
+  const driver = await ctx.connect();
+  const Client = createClientClass(contract);
+  const client = new Client({ driver });
+  const readOnly = args.flags["read-only"] === true;
+  const studio = createStudio({ contract, client: client as unknown as StudioClient, readOnly, label: await ctx.connectionHost() });
+  let url: string;
+  try {
+    url = await studio.listen(port, host);
+  } catch (e) {
+    await client.$disconnect();
+    throw new Error(`Cannot listen on ${host}:${port}: ${(e as Error).message}`);
+  }
+  ctx.log(`hana-orm studio${readOnly ? " (read-only)" : ""} for ${Object.keys(contract.models).length} model(s)`);
+  ctx.log(`Open ${url}`);
+  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") ctx.warn(`Listening on ${host}: anyone who has the URL above can read and change the data.`);
+  ctx.log("Press Ctrl+C to stop.");
+  await new Promise<void>((resolve) => {
+    process.once("SIGINT", () => resolve());
+    process.once("SIGTERM", () => resolve());
+  });
+  await studio.close();
+  await client.$disconnect();
+  return 0;
+}
+
 export async function main(argv: string[]): Promise<number> {
   loadDotEnv();
   const args = normalizeFlags(parseArgs(argv));
@@ -303,6 +338,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdValidate(ctx);
       case "format":
         return cmdFormat(ctx, args);
+      case "studio":
+        return await cmdStudio(ctx, args);
       case "version":
       case "--version":
         console.log(VERSION);
