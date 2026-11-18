@@ -3,6 +3,7 @@ import { encodeValue } from "./codec.ts";
 import type { Engine } from "./engine.ts";
 import { ValidationError } from "./errors.ts";
 import { escapeLike, quoteIdent } from "./sql.ts";
+import { SQL } from "./builder/core.ts";
 
 /** Collects bound parameters in the order their `?` placeholders appear in the SQL text. */
 export class SqlContext {
@@ -32,9 +33,20 @@ function toArray<T>(v: T | T[]): T[] {
 
 const paren = (s: string) => `(${s})`;
 
+/**
+ * Renders an `sql` fragment inside an object-API query: columns of `model`'s table
+ * (`tables.user.email`) become `alias."EMAIL"`, values are bound in order.
+ */
+function sqlFragment(engine: Engine, model: ModelDef, fragment: SQL<unknown>, alias: string, ctx: SqlContext): string {
+  const key = model.name.charAt(0).toLowerCase() + model.name.slice(1);
+  const text = fragment.render({ contract: engine.contract, defaultSchema: engine.defaultSchema, params: ctx.params, aliases: new Map([[key, alias]]) });
+  return `(${text})`;
+}
+
 /** Builds a SQL condition for a `WhereInput`; returns null when it does not restrict anything. */
 export function buildWhere(engine: Engine, model: ModelDef, where: unknown, alias: string, ctx: SqlContext): string | null {
   if (where === undefined || where === null) return null;
+  if (where instanceof SQL) return sqlFragment(engine, model, where, alias, ctx);
   if (!isPlainObject(where)) throw new ValidationError(`'where' for model '${model.name}' must be an object`);
   const parts: string[] = [];
 
@@ -196,6 +208,7 @@ function relationCondition(engine: Engine, model: ModelDef, rel: RelationFieldDe
   }
 
   if (filter === null) return isNull();
+  if (filter instanceof SQL) return exists(filter);
   if (!isPlainObject(filter)) throw new ValidationError(`Filter on relation '${rel.name}' must be an object or null`);
   const keys = Object.keys(filter);
   if (keys.length && keys.every((k) => k === "is" || k === "isNot")) {
