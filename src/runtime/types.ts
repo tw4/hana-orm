@@ -32,6 +32,8 @@ export interface NullableFilter<T> {
 }
 
 export interface StringFilter extends Omit<Filter<string>, "not"> {
+  /** Full-text search, `CONTAINS(column, search)` in HANA's search syntax (`hana orm`, `"exact phrase"`, `hana OR orm`, `-legacy`). */
+  search?: string;
   contains?: string;
   startsWith?: string;
   endsWith?: string;
@@ -40,6 +42,8 @@ export interface StringFilter extends Omit<Filter<string>, "not"> {
 }
 
 export interface StringNullableFilter extends Omit<NullableFilter<string>, "not"> {
+  /** Full-text search, `CONTAINS(column, search)` in HANA's search syntax. */
+  search?: string;
   contains?: string;
   startsWith?: string;
   endsWith?: string;
@@ -56,10 +60,31 @@ export interface BoolNullableFilter {
   not?: boolean | null | BoolNullableFilter;
 }
 
+/**
+ * Filter on a `Json` field. Without `path` the operators apply to the whole document (`$`).
+ * With `path` (`["address", "city"]` or `"$.address.city"`) they apply to the value there:
+ * `equals`/`not`/`lt`/`lte`/`gt`/`gte` compare a scalar (`JSON_VALUE`), `string_*` match a string
+ * value, `array_*` test a scalar element of an array (`JSON_QUERY`).
+ */
 export interface JsonFilter {
+  path?: string | (string | number)[];
   equals?: JsonValue;
   not?: JsonValue;
+  lt?: number | string;
+  lte?: number | string;
+  gt?: number | string;
+  gte?: number | string;
+  string_contains?: string;
+  string_starts_with?: string;
+  string_ends_with?: string;
+  /** For the `string_*` operators. */
+  mode?: QueryMode;
+  /** The array contains this element, or every element of this list (scalars only). */
+  array_contains?: JsonScalar | JsonScalar[];
+  array_starts_with?: JsonScalar;
+  array_ends_with?: JsonScalar;
 }
+export type JsonScalar = string | number | boolean | null;
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 /** Atomic number updates. */
@@ -118,3 +143,41 @@ export interface BatchPayload {
 
 /** A read that can also be compiled once: `db.user.findMany(args).prepare()`. */
 export type PreparableQuery<T> = Promise<T> & { prepare(): import("./prepared.ts").Prepared<T> };
+
+// ---- result extensions (computed fields) ----------------------------------------------
+
+/** `select` / `omit` entries for the computed fields `R`. */
+export type ComputedKeys<R> = { [K in keyof R]?: boolean };
+
+/** Args type `T` whose `select` and `omit` also accept the computed fields `R`. */
+export type ArgsWithComputed<T, R> = [keyof R] extends [never] ? T : T & { select?: ComputedKeys<R> | null; omit?: ComputedKeys<R> | null };
+
+/** `A` without computed names in `select` / `omit` (they are not model fields). */
+export type StripComputed<A, R> = [keyof R] extends [never]
+  ? A
+  : { [P in keyof A]: P extends "select" | "omit" ? (A[P] extends object ? Omit<A[P], keyof R> : A[P]) : A[P] };
+
+type ComputedPick<R, A> = A extends { select: infer S }
+  ? S extends object
+    ? { [K in keyof R as K extends SelectedKeys<S> ? K : never]: R[K] }
+    : R
+  : A extends { omit: infer O }
+    ? O extends object
+      ? { [K in keyof R as K extends TrueKeys<O> ? never : K]: R[K] }
+      : R
+    : R;
+
+/** Payload `P` plus the computed fields `R` that the args `A` select (all unless `select` / `omit` say otherwise). */
+export type WithComputed<P, R, A> = [keyof R] extends [never] ? P : P extends object ? Simplify<P & ComputedPick<R, A>> : P;
+
+/** Value types of model `K`'s computed fields in the extension `E`. */
+export type ComputedOf<E, K extends string> = E extends { result: infer RR }
+  ? RR extends Record<string, unknown>
+    ? K extends keyof RR
+      ? { [F in keyof RR[K]]: RR[K][F] extends { compute: (...args: any[]) => infer V } ? V : never }
+      : {}
+    : {}
+  : {};
+
+/** Computed fields a delegate type already has (from earlier `$extends` calls). */
+export type PrevComputed<C, K extends string> = C extends { readonly [P in K]: { readonly $computed?: infer R } } ? NonNullable<R> : {};

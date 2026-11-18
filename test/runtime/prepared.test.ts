@@ -90,3 +90,12 @@ test("a placeholder outside a prepared query is refused before it reaches the da
   assert.throws(() => db.user.count({ where: { id: 1 } }).then.call(undefined as never), TypeError);
   assert.equal((db.user.count({}) as unknown as { prepare?: unknown }).prepare, undefined, "only reads are preparable");
 });
+
+test("object API: a prepared read of an extended client adds computed fields", async () => {
+  const { db, driver } = setup([{ id: 1, email: "a@x", name: "Ada" }]);
+  const ext = db.$extends({ result: { user: { label: { needs: { email: true, name: true }, compute: (u: { email: string; name: string | null }) => `${u.name} <${u.email}>` } } } });
+  const p = ext.user.findMany({ select: { id: true, label: true }, where: { role: placeholder("role") } }).prepare();
+  const rows = await p.execute({ role: "USER" });
+  assert.deepEqual(rows, [{ id: 1, label: "Ada <a@x>" }], "computed, and the fields it needed are stripped again");
+  assert.match(driver.calls.at(-1)!.sql, /"email"/);
+});

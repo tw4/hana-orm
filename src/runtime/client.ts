@@ -1,3 +1,4 @@
+import type { DecimalConstructor, DecimalMode } from "./codec.ts";
 import type { Contract, ModelDef } from "../schema/contract.ts";
 import { clientContract } from "../schema/contract.ts";
 import { formatTimestamp } from "./codec.ts";
@@ -10,8 +11,15 @@ import { Prepared } from "./prepared.ts";
 import { PlaceholderSlot } from "./placeholder.ts";
 import { TABLE, type InsertOf } from "./builder/core.ts";
 import { DeleteBuilder, InsertBuilder, SelectStart, UpdateStart, WithStart, type BuilderHost, type Cte, type Selection } from "./builder/query.ts";
+import { decodeTypedRow, type TypedSql } from "./typed-sql.ts";
+import { ROW_OPERATIONS, applyComputed, prepareArgs, validateComputed, type ComputedField, type ComputedFields } from "./computed.ts";
+import { InstrumentedDriver, Observer, type ClientEventName, type ClientEvents, type ClientMetrics, type StatsDriver } from "./events.ts";
 
-export type LogOption = boolean | "query" | ((event: QueryEvent) => void);
+/**
+ * `true` / `"query"` prints every statement with its duration; a list of levels prints those
+ * events (`["query", "warn", "error"]`); a function receives each statement (`QueryEvent`).
+ */
+export type LogOption = boolean | "query" | readonly ClientEventName[] | ((event: QueryEvent) => void);
 
 /** Options of `$transaction`; client-wide defaults go into `ClientOptions.transactionOptions`. */
 export interface TransactionOptions {
@@ -124,10 +132,31 @@ export interface ClientOptions {
   driver?: Driver;
   /** Max pooled connections (default 10). */
   poolSize?: number;
+  /**
+   * Milliseconds a single statement may run (default: no limit). A statement that runs longer
+   * fails with `QueryTimeoutError`; its connection is closed, which stops it on the server and
+   * rolls back its transaction.
+   */
+  statementTimeout?: number;
+  /** Close pooled connections idle this long, in ms (default 5 minutes; 0 keeps them open). */
+  idleTimeout?: number;
+  /** Check a pooled connection with `SELECT 1 FROM DUMMY` when it was idle this long, in ms (default 30 s). */
+  idleCheckAfter?: number;
   /** `true`/"query" prints each SQL statement with its duration; a function receives the events. */
   log?: LogOption;
+  /** Include bound parameter values in query events and logs (default false: values may be personal data). */
+  logParams?: boolean;
+  /** Statements that run at least this many ms also emit a `warn` event. */
+  slowQueryThreshold?: number;
   /** Fields left out of every result unless a query asks for them: `{ user: { passwordHash: true } }`. */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+  /** Compiled queries kept per query shape (default 500; 0 turns the plan cache off). */
+  planCacheSize?: number;
+  /**
+   * Prepared statements kept per pooled connection and reused for the same SQL text
+   * (default 0: off). Saves HANA from parsing the statement again.
+   */
+  statementCacheSize?: number;
   /** Defaults for every `$transaction` (`timeout`, `maxWait`, `isolationLevel`). */
   transactionOptions?: TransactionOptions;
 }
@@ -172,13 +201,28 @@ export interface ExtensionArgs {
   query?: Record<string, Record<string, (params: QueryExtensionParams) => Promise<any>>>;
   /** Extra methods on the client itself. */
   client?: Record<string, AnyFn>;
+  /**
+   * Computed fields: `{ user: { fullName: { needs: { firstName: true, lastName: true }, compute: (u) => ... } } }`.
+   * The needed fields are fetched automatically; `select` / `omit` accept the computed names.
+   */
+  result?: Record<string, Record<string, ComputedField>>;
 }
 
 export const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
+/** Settings the generator bakes into a client class (they shape its types). */
+export interface GeneratedConfig {
+  /** How Decimal fields are returned (generator option `decimal`, default "string"). */
+  decimal?: DecimalMode;
+  /** decimal.js' class, passed by clients generated with `decimal = "decimal.js"`. */
+  Decimal?: DecimalConstructor;
+}
+
 interface Shared {
   contract: Contract;
   options: ClientOptions;
+  observer: Observer;
+  config: GeneratedConfig;
   engine: Engine | undefined;
   driver: Driver | undefined;
 }
@@ -189,8 +233,13 @@ export class BaseClient {
   /** @internal */ _tx: Queryable | undefined;
   /** @internal */ _extensions: ExtensionArgs[];
 
-  constructor(contract: Contract, options: ClientOptions = {}) {
-    this._shared = { contract: clientContract(contract), options, engine: undefined, driver: options.driver };
+  constructor(contract: Contract, options: ClientOptions = {}, config: GeneratedConfig = {}) {
+    const observer = new Observer({
+      ...(options.logParams !== undefined ? { logParams: options.logParams } : {}),
+      ...(options.slowQueryThreshold !== undefined ? { slowQueryThreshold: options.slowQueryThreshold } : {}),
+    });
+    installLogger(observer, options.log);
+    this._shared = { contract: clientContract(contract), options, config, observer, engine: undefined, driver: options.driver ? new InstrumentedDriver(options.driver, observer) : undefined };
     this._tx = undefined;
     this._extensions = [];
     this._install();
@@ -201,7 +250,11 @@ export class BaseClient {
   /** @internal */
   _engine(): Engine {
     const s = this._shared;
-    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), { omit: s.options.omit });
+    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), {
+      omit: s.options.omit,
+      ...(s.options.planCacheSize !== undefined ? { planCacheSize: s.options.planCacheSize } : {}),
+      decode: { ...(s.config.decimal ? { decimal: s.config.decimal } : {}), ...(s.config.Decimal ? { Decimal: s.config.Decimal } : {}) },
+    });
     return s.engine;
   }
 
@@ -210,7 +263,17 @@ export class BaseClient {
     const s = this._shared;
     if (!s.driver) {
       const config = resolveConnectionConfig(s.contract.datasource, s.options.datasource);
-      s.driver = new HanaDriver(config, { poolSize: s.options.poolSize, onQuery: makeLogger(s.options.log) });
+      const o = s.options;
+      s.driver = new InstrumentedDriver(
+        new HanaDriver(config, {
+          ...(o.poolSize !== undefined ? { poolSize: o.poolSize } : {}),
+          ...(o.statementTimeout !== undefined ? { statementTimeout: o.statementTimeout } : {}),
+          ...(o.idleTimeout !== undefined ? { idleTimeout: o.idleTimeout } : {}),
+          ...(o.idleCheckAfter !== undefined ? { idleCheckAfter: o.idleCheckAfter } : {}),
+          ...(o.statementCacheSize !== undefined ? { statementCacheSize: o.statementCacheSize } : {}),
+        }),
+        s.observer,
+      );
     }
     return s.driver;
   }
@@ -235,6 +298,10 @@ export class BaseClient {
   _delegate(model: ModelDef): Record<string, AnyFn> {
     const delegate: Record<string, AnyFn> = {};
     const key = lowerFirst(model.name);
+    const computed: ComputedFields = new Map();
+    for (const ext of this._extensions) {
+      for (const [name, def] of Object.entries(ext.result?.[key] ?? {})) computed.set(name, validateComputed(model, name, def));
+    }
     for (const op of OPERATIONS) {
       const base = (args: any) => this._execute(model, op, args);
       // Wrap with query extensions, innermost = first registered.
@@ -246,11 +313,20 @@ export class BaseClient {
           call = (args: any) => hook({ model: model.name, operation: op, args, query: next });
         }
       }
+      if (computed.size && ROW_OPERATIONS.has(op)) {
+        // outermost: query hooks see arguments without computed names
+        const inner = call;
+        call = async (args: any) => {
+          const omitted = this._engine().globalOmit.get(model.name) ?? {};
+          const prepared = prepareArgs(args ?? {}, computed, new Set(Object.keys(omitted).filter((k) => omitted[k])));
+          return applyComputed(await inner(prepared.args), prepared);
+        };
+      }
       // Lazy: runs when awaited, or inside $transaction([...]) on the transaction client.
       delegate[op] = (args?: any) => {
         const qp = new QueryPromise((client) => (client ? (client as unknown as Record<string, Record<string, AnyFn>>)[key]![op]!(args) : call(args ?? {})));
         // reads can be compiled once and run with placeholder values (query extensions are not applied)
-        if (PREPARABLE.has(op)) Object.defineProperty(qp, "prepare", { value: () => this._prepareRead(model, op, args ?? {}) });
+        if (PREPARABLE.has(op)) Object.defineProperty(qp, "prepare", { value: () => this._prepareRead(model, op, args ?? {}, computed) });
         return qp;
       };
     }
@@ -261,8 +337,18 @@ export class BaseClient {
     return delegate;
   }
 
-  /** @internal */
+  /** @internal Runs one model operation; a failure is reported as an `error` event. */
   async _execute(model: ModelDef, op: Operation, args: any): Promise<any> {
+    try {
+      return await this._executeOp(model, op, args);
+    } catch (err) {
+      this._shared.observer.log("error", err instanceof Error ? err.message : String(err), `${model.name}.${op}`);
+      throw err;
+    }
+  }
+
+  /** @internal */
+  async _executeOp(model: ModelDef, op: Operation, args: any): Promise<any> {
     const e = this._engine();
     switch (op) {
       case "findMany":
@@ -295,9 +381,17 @@ export class BaseClient {
   }
 
   /** @internal */
-  _prepareRead(model: ModelDef, op: Operation, args: any): Prepared<unknown> {
-    const p = this._engine().prepareRead(model, op, args);
-    return new Prepared((write, fn) => this._run(write, fn), false, p.sql, p.placeholders, p.run);
+  _prepareRead(model: ModelDef, op: Operation, args: any, computed?: ComputedFields): Prepared<unknown> {
+    const e = this._engine();
+    if (!computed?.size) {
+      const p = e.prepareRead(model, op, args);
+      return new Prepared((write, fn) => this._run(write, fn), false, p.sql, p.placeholders, p.run);
+    }
+    // computed fields: fetch what they need, then compute them on every execution
+    const omitted = e.globalOmit.get(model.name) ?? {};
+    const prepared = prepareArgs(args, computed, new Set(Object.keys(omitted).filter((k) => omitted[k])));
+    const p = e.prepareRead(model, op, prepared.args);
+    return new Prepared((write, fn) => this._run(write, fn), false, p.sql, p.placeholders, async (values, q) => applyComputed(await p.run(values, q), prepared));
   }
 
   /** @internal Clone sharing driver/engine with a different transaction or extensions. */
@@ -313,12 +407,32 @@ export class BaseClient {
   /** Opens a connection eagerly (otherwise the first query connects). */
   async $connect(): Promise<void> {
     await this._driver().query(`SELECT 1 AS "ok" FROM DUMMY`);
+    this._shared.observer.log("info", "Connected", "client");
   }
 
   /** Closes all pooled connections. */
   async $disconnect(): Promise<void> {
-    await this._shared.driver?.close();
+    const driver = this._shared.driver;
+    if (!driver) return;
+    await driver.close();
     this._shared.driver = undefined;
+    this._shared.observer.log("info", "Disconnected; the connection pool is closed", "client");
+  }
+
+  /**
+   * Subscribes to client events: `query` (every statement, with its duration), `info`, `warn`
+   * (e.g. slow queries) and `error` (failed operations). Returns a function that unsubscribes.
+   * Parameter values are left out unless the client was created with `logParams: true`.
+   */
+  $on<E extends ClientEventName>(event: E, handler: (event: ClientEvents[E]) => void): () => void {
+    return this._shared.observer.on(event, handler);
+  }
+
+  /** Counters since the client was created, plus the connection pool's current state. */
+  $metrics(): ClientMetrics {
+    const d = this._shared.driver as StatsDriver | undefined;
+    const inner = d instanceof InstrumentedDriver ? d.inner : d;
+    return this._shared.observer.metrics(inner?.stats ? inner.stats() : null);
   }
 
   /**
@@ -377,11 +491,11 @@ export class BaseClient {
       },
       { ...(opts.isolationLevel ? { isolationLevel: opts.isolationLevel } : {}), ...(Number.isFinite(maxWait) ? { maxWait } : {}) },
     );
-    if (!limited) return run;
+    if (!limited) return this._report("transaction", run);
     // Reject at the timeout without waiting for a running statement; the rollback follows.
     run.catch(() => {});
     timedOut.catch(() => {});
-    return Promise.race([run, timedOut]);
+    return this._report("transaction", Promise.race([run, timedOut]));
   }
 
   /** Raw SELECT as a tagged template; values are bound as parameters. Rows are returned as the driver gives them. */
@@ -396,12 +510,32 @@ export class BaseClient {
 
   /** Raw SELECT with `?` placeholders. Never build `sql` from user input. */
   $queryRawUnsafe<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]> {
-    return new QueryPromise((client) => (client ? client.$queryRawUnsafe<T>(sql, ...params) : this._run(false, (q) => q.query<T>(sql, params.map(rawParam)))));
+    return new QueryPromise((client) => (client ? client.$queryRawUnsafe<T>(sql, ...params) : this._report("$queryRaw", this._run(false, (q) => q.query<T>(sql, params.map(rawParam))))));
   }
 
   /** Raw DML/DDL with `?` placeholders. Never build `sql` from user input. */
   $executeRawUnsafe(sql: string, ...params: unknown[]): Promise<number> {
-    return new QueryPromise((client) => (client ? client.$executeRawUnsafe(sql, ...params) : this._run(false, (q) => q.execute(sql, params.map(rawParam)))));
+    return new QueryPromise((client) => (client ? client.$executeRawUnsafe(sql, ...params) : this._report("$executeRaw", this._run(false, (q) => q.execute(sql, params.map(rawParam))))));
+  }
+
+  /** @internal Reports a failure of `p` as an `error` event. */
+  _report<T>(target: string, p: Promise<T>): Promise<T> {
+    return p.catch((err: unknown) => {
+      this._shared.observer.log("error", err instanceof Error ? err.message : String(err), target);
+      throw err;
+    });
+  }
+
+  /**
+   * Runs a query generated from a `.sql` file (`hana-orm generate --sql`) and returns rows
+   * typed and decoded by the column types HANA reported.
+   */
+  $queryRawTyped<R>(query: TypedSql<R>): Promise<R[]> {
+    return new QueryPromise((client) =>
+      client
+        ? client.$queryRawTyped(query)
+        : this._run(false, async (q) => (await q.query<Record<string, unknown>>(query.sql, query.params.map(rawParam))).map((r) => decodeTypedRow(r, query.columns) as R)),
+    );
   }
 
   // ---- SQL-like query builder (tables from the generated `tables`) ----------------------------
@@ -468,17 +602,32 @@ function rawParam(v: unknown): unknown {
   return v;
 }
 
-function makeLogger(log: LogOption | undefined): ((e: QueryEvent) => void) | undefined {
-  if (!log) return undefined;
-  if (typeof log === "function") return log;
-  return (e) => console.log(`hana-orm:query ${e.sql} (${e.durationMs.toFixed(1)} ms)`);
+/** Subscribes the `log` client option to the observer. */
+function installLogger(observer: Observer, log: LogOption | undefined): void {
+  if (!log) return;
+  if (typeof log === "function") {
+    observer.on("query", (e) => log({ sql: e.sql, params: e.params, durationMs: e.durationMs }));
+    return;
+  }
+  const levels: readonly ClientEventName[] = Array.isArray(log) ? log : ["query"];
+  for (const level of levels) {
+    if (level === "query") {
+      observer.on("query", (e) =>
+        console.log(`hana-orm:query ${e.sql} (${e.durationMs.toFixed(1)} ms)${e.params.length ? ` ${JSON.stringify(e.params, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}` : ""}${e.error ? ` failed: ${e.error}` : ""}`),
+      );
+    } else {
+      const out = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+      observer.on(level, (e) => out(`hana-orm:${level} [${e.target}] ${e.message}`));
+    }
+  }
 }
 
 /** Used by generated code: `export const HanaClient = createClientClass(contract)`. */
-export function createClientClass(contract: Contract): new (options?: ClientOptions) => BaseClient {
+export function createClientClass(contract: Contract, config: GeneratedConfig = {}): new (options?: ClientOptions) => BaseClient {
+  if (config.decimal === "decimal.js" && !config.Decimal) throw new Error('createClientClass: decimal "decimal.js" needs the Decimal class');
   return class HanaClient extends BaseClient {
     constructor(options?: ClientOptions) {
-      super(contract, options);
+      super(contract, options, config);
     }
   };
 }

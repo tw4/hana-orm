@@ -8,13 +8,14 @@ import {
   type ModelDef,
   type RelationFieldDef,
 } from "../schema/contract.ts";
-import { decodeValue, encodeValue } from "./codec.ts";
+import { decodeValue, encodeValue, type DecodeOptions } from "./codec.ts";
 import { fillParams, slotNames, type PlaceholderValues } from "./prepared.ts";
 import { collectPlaceholders, substitutePlaceholders } from "./placeholder.ts";
 import type { Queryable } from "./driver.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
 import { quoteIdent, tableRef } from "./sql.ts";
 import { buildWhere, compoundKey, isPlainObject, joinCondition, scalarCondition, SqlContext } from "./where.ts";
+import { PlanCache, planKey, type PlanCacheStats } from "./plan-cache.ts";
 
 type Row = Record<string, unknown>;
 type Args = Record<string, unknown>;
@@ -108,18 +109,29 @@ function nonNegativeInt(v: unknown, name: string): number {
 export interface EngineOptions {
   /** Client-wide `omit`, keyed by delegate name (`user`, `post`, ...). */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+  /** Compiled SELECTs kept per query shape (default 500; 0 disables the cache). */
+  planCacheSize?: number;
+  /** How Decimal values are returned. */
+  decode?: DecodeOptions;
 }
+
+/** Default number of cached query plans. */
+export const DEFAULT_PLAN_CACHE_SIZE = 500;
 
 export class Engine {
   readonly contract: Contract;
   readonly defaultSchema: string | undefined;
   /** Client-wide omitted fields per model name. */
   readonly globalOmit: Map<string, Record<string, boolean | undefined>>;
+  readonly #plans: PlanCache<Selection>;
+  readonly decode: DecodeOptions;
 
   constructor(contract: Contract, defaultSchema?: string, options: EngineOptions = {}) {
     this.contract = contract;
     this.defaultSchema = defaultSchema;
     this.globalOmit = new Map();
+    this.#plans = new PlanCache(options.planCacheSize ?? DEFAULT_PLAN_CACHE_SIZE);
+    this.decode = options.decode ?? {};
     for (const [key, value] of Object.entries(options.omit ?? {})) {
       if (value === undefined) continue;
       const model = Object.values(contract.models).find((m) => m.name.charAt(0).toLowerCase() + m.name.slice(1) === key);
@@ -457,7 +469,7 @@ export class Engine {
 
   private decodeRow(model: ModelDef, sel: Selection, raw: Row): Row {
     const row: Row = {};
-    for (const f of sel.columns) row[f.name] = decodeValue(this.contract, f, raw[f.name]);
+    for (const f of sel.columns) row[f.name] = decodeValue(this.contract, f, raw[f.name], this.decode);
     if (sel.counts.length) {
       const counts: Row = {};
       for (const r of sel.counts) counts[r.name] = Number(raw[`_count.${r.name}`] ?? 0);
@@ -467,7 +479,34 @@ export class Engine {
   }
 
   private async readMany(model: ModelDef, args: Args, q: Queryable, options: SelectOptions = {}): Promise<{ rows: Row[]; hidden: Set<string> }> {
-    return this.execSelect(model, this.buildSelect(model, args, options), args, q);
+    const top = Object.keys(options).length === 0;
+    return this.execSelect(model, top ? this.cachedSelect(model, args) : this.buildSelect(model, args, options), args, q);
+  }
+
+  /** `buildSelect` through the plan cache (top-level reads only). */
+  cachedSelect(model: ModelDef, args: Args): { sql: string; params: unknown[]; sel: Selection; reverse: boolean } {
+    const cache = this.#plans;
+    if (!cache.enabled) return this.buildSelect(model, args);
+    const shape = planKey(model, args);
+    if (!shape) {
+      cache.uncacheable++;
+      return this.buildSelect(model, args);
+    }
+    const where = (args.where ?? {}) as Row;
+    const params = (fields: ColumnFieldDef[]) => fields.map((f) => encodeValue(this.contract, f, where[f.name]));
+    const hit = cache.get(shape.key);
+    if (hit) return { sql: hit.sql, params: params(hit.whereFields), sel: hit.sel, reverse: hit.reverse };
+    const built = this.buildSelect(model, args);
+    // cache only when the shape really yields the where values as its parameters, in order
+    const extracted = params(shape.whereFields);
+    if (sameParams(extracted, built.params)) cache.set(shape.key, { sql: built.sql, sel: built.sel, reverse: built.reverse, whereFields: shape.whereFields });
+    else cache.uncacheable++;
+    return built;
+  }
+
+  /** Plan cache counters (`$metrics`, benchmarks). */
+  planCacheStats(): PlanCacheStats {
+    return this.#plans.stats();
   }
 
   private async execSelect(
@@ -669,7 +708,7 @@ export class Engine {
     const rows = await q.query<Row>(sql, ctx.params);
     return rows.map((r) => {
       const out: Row = {};
-      for (const f of byFields) out[f.name] = decodeValue(this.contract, f, r[f.name]);
+      for (const f of byFields) out[f.name] = decodeValue(this.contract, f, r[f.name], this.decode);
       return { ...out, ...decode(r) };
     });
   }
@@ -784,7 +823,7 @@ export class Engine {
             const v = r[`${op}.${f.name}`];
             if (v === null || v === undefined) return [f.name, null];
             if (op === "_avg") return [f.name, Number(v)];
-            return [f.name, decodeValue(this.contract, f, v)];
+            return [f.name, decodeValue(this.contract, f, v, this.decode)];
           }),
         );
       });
@@ -802,6 +841,28 @@ export class Engine {
   // =====================================================================
   // Writes (callers run these inside a transaction)
   // =====================================================================
+
+  /** Fields with a `sequence()` default that the row does not set. */
+  private pendingSequences(model: ModelDef, values: Row): ColumnFieldDef[] {
+    return columnFields(model).filter((f) => f.default?.kind === "sequence" && values[f.name] === undefined);
+  }
+
+  private sequenceRef(model: ModelDef, f: ColumnFieldDef): string {
+    if (f.default?.kind !== "sequence") throw new Error(`'${f.name}' has no sequence default`);
+    return tableRef({ dbName: f.default.name, schema: model.schema }, this.defaultSchema);
+  }
+
+  private nextval(model: ModelDef, f: ColumnFieldDef): string {
+    return `${this.sequenceRef(model, f)}.NEXTVAL`;
+  }
+
+  /** Reads the values the last INSERT took from its sequences (CURRVAL is per session). */
+  private async readSequences(model: ModelDef, seqFields: readonly ColumnFieldDef[], values: Row, q: Queryable): Promise<void> {
+    for (const f of seqFields) {
+      const [r] = await q.query<Row>(`SELECT ${this.sequenceRef(model, f)}.CURRVAL AS "v" FROM DUMMY`);
+      values[f.name] = decodeValue(this.contract, f, r?.v);
+    }
+  }
 
   private assertWritable(model: ModelDef): void {
     if (model.kind === "view") throw new ValidationError(`'${model.name}' is a view and cannot be written`);
@@ -888,7 +949,7 @@ export class Engine {
       if (d !== undefined) values[f.name] = d;
     }
     for (const f of cols) {
-      const generated = f.default?.kind === "autoincrement" || f.default?.kind === "dbgenerated";
+      const generated = f.default?.kind === "autoincrement" || f.default?.kind === "dbgenerated" || f.default?.kind === "sequence";
       if (values[f.name] === undefined && !f.optional && !generated) {
         throw new ValidationError(`Missing required field '${f.name}' in create of '${model.name}'`);
       }
@@ -896,8 +957,11 @@ export class Engine {
 
     const names = Object.keys(values);
     const fields = names.map((n) => this.column(model, n));
-    const sql = `INSERT INTO ${this.table(model)} (${fields.map((f) => quoteIdent(f.dbName)).join(", ")}) VALUES (${fields.map(() => "?").join(", ")})`;
-    await q.execute(sql, fields.map((f) => encodeValue(this.contract, f, values[f.name])));
+    const seqFields = this.pendingSequences(model, values);
+    const colList = [...fields, ...seqFields].map((f) => quoteIdent(f.dbName)).join(", ");
+    const marks = [...fields.map(() => "?"), ...seqFields.map((f) => this.nextval(model, f))].join(", ");
+    await q.execute(`INSERT INTO ${this.table(model)} (${colList}) VALUES (${marks})`, fields.map((f) => encodeValue(this.contract, f, values[f.name])));
+    await this.readSequences(model, seqFields, values, q);
 
     const identityCol = cols.find((f) => f.default?.kind === "autoincrement" && values[f.name] === undefined);
     if (identityCol) {
@@ -1329,9 +1393,11 @@ export class Engine {
     for (const data of toArray(args.data as Row | Row[])) {
       const values = this.createManyValues(model, data, "createManyAndReturn");
       const fields = columnFields(model).filter((f) => values[f.name] !== undefined);
-      const insert = this.createManyInsert(model, fields, skip);
+      const seqFields = this.pendingSequences(model, values);
+      const insert = this.createManyInsert(model, fields, skip, seqFields);
       const inserted = await q.execute(insert.sql, insert.params(values));
       if (!inserted) continue;
+      await this.readSequences(model, seqFields, values, q);
       const identityCol = columnFields(model).find((f) => f.default?.kind === "autoincrement" && values[f.name] === undefined);
       if (identityCol) {
         const [r] = await q.query<Row>(`SELECT CURRENT_IDENTITY_VALUE() AS "id" FROM DUMMY`);
@@ -1383,7 +1449,8 @@ export class Engine {
     }
     let count = 0;
     for (const g of groups.values()) {
-      const insert = this.createManyInsert(model, g.fields, skipDuplicates);
+      // rows of a group set the same fields, so they leave the same sequence fields to fill
+      const insert = this.createManyInsert(model, g.fields, skipDuplicates, this.pendingSequences(model, g.rows[0]!));
       count += await q.executeBatch(insert.sql, g.rows.map(insert.params));
     }
     return count;
@@ -1406,7 +1473,7 @@ export class Engine {
         const d = this.clientDefault(f);
         if (d !== undefined) values[f.name] = d;
       }
-      const generated = f.default?.kind === "autoincrement" || f.default?.kind === "dbgenerated";
+      const generated = f.default?.kind === "autoincrement" || f.default?.kind === "dbgenerated" || f.default?.kind === "sequence";
       if (values[f.name] === undefined && !f.optional && !generated) throw new ValidationError(`Missing required field '${f.name}' in ${op} of '${model.name}'`);
     }
     return values;
@@ -1418,10 +1485,15 @@ export class Engine {
    * unique whose fields are all set, so a row that matches an existing row (or one inserted
    * earlier in the same batch) is skipped instead of failing.
    */
-  private createManyInsert(model: ModelDef, fields: ColumnFieldDef[], skipDuplicates: boolean): { sql: string; params: (values: Row) => unknown[] } {
+  private createManyInsert(
+    model: ModelDef,
+    fields: ColumnFieldDef[],
+    skipDuplicates: boolean,
+    seqFields: ColumnFieldDef[] = [],
+  ): { sql: string; params: (values: Row) => unknown[] } {
     const table = this.table(model);
-    const cols = fields.map((f) => quoteIdent(f.dbName)).join(", ");
-    const marks = fields.map(() => "?").join(", ");
+    const cols = [...fields, ...seqFields].map((f) => quoteIdent(f.dbName)).join(", ");
+    const marks = [...fields.map(() => "?"), ...seqFields.map((f) => this.nextval(model, f))].join(", ");
     const encode = (values: Row) => fields.map((f) => encodeValue(this.contract, f, values[f.name]));
     const set = new Set(fields.map((f) => f.name));
     const keys = skipDuplicates
@@ -1451,4 +1523,13 @@ function strip(rows: Row[], hidden: Set<string>): Row[] {
   if (!hidden.size) return rows;
   for (const r of rows) for (const h of hidden) delete r[h];
   return rows;
+}
+
+function sameParams(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((x, i) => {
+    const y = b[i];
+    if (Buffer.isBuffer(x) && Buffer.isBuffer(y)) return x.equals(y);
+    return Object.is(x, y);
+  });
 }
