@@ -8,7 +8,7 @@ import {
   type ModelDef,
   type RelationFieldDef,
 } from "../schema/contract.ts";
-import { decodeValue, encodeValue } from "./codec.ts";
+import { decodeValue, encodeValue, type DecodeOptions } from "./codec.ts";
 import type { Queryable } from "./driver.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
 import { quoteIdent, tableRef } from "./sql.ts";
@@ -106,6 +106,8 @@ function nonNegativeInt(v: unknown, name: string): number {
 export interface EngineOptions {
   /** Client-wide `omit`, keyed by delegate name (`user`, `post`, ...). */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+  /** How Decimal values are returned. */
+  decode?: DecodeOptions;
 }
 
 export class Engine {
@@ -113,11 +115,13 @@ export class Engine {
   readonly defaultSchema: string | undefined;
   /** Client-wide omitted fields per model name. */
   readonly globalOmit: Map<string, Record<string, boolean | undefined>>;
+  readonly decode: DecodeOptions;
 
   constructor(contract: Contract, defaultSchema?: string, options: EngineOptions = {}) {
     this.contract = contract;
     this.defaultSchema = defaultSchema;
     this.globalOmit = new Map();
+    this.decode = options.decode ?? {};
     for (const [key, value] of Object.entries(options.omit ?? {})) {
       if (value === undefined) continue;
       const model = Object.values(contract.models).find((m) => m.name.charAt(0).toLowerCase() + m.name.slice(1) === key);
@@ -418,7 +422,7 @@ export class Engine {
 
   private decodeRow(model: ModelDef, sel: Selection, raw: Row): Row {
     const row: Row = {};
-    for (const f of sel.columns) row[f.name] = decodeValue(this.contract, f, raw[f.name]);
+    for (const f of sel.columns) row[f.name] = decodeValue(this.contract, f, raw[f.name], this.decode);
     if (sel.counts.length) {
       const counts: Row = {};
       for (const r of sel.counts) counts[r.name] = Number(raw[`_count.${r.name}`] ?? 0);
@@ -630,7 +634,7 @@ export class Engine {
     const rows = await q.query<Row>(sql, ctx.params);
     return rows.map((r) => {
       const out: Row = {};
-      for (const f of byFields) out[f.name] = decodeValue(this.contract, f, r[f.name]);
+      for (const f of byFields) out[f.name] = decodeValue(this.contract, f, r[f.name], this.decode);
       return { ...out, ...decode(r) };
     });
   }
@@ -745,7 +749,7 @@ export class Engine {
             const v = r[`${op}.${f.name}`];
             if (v === null || v === undefined) return [f.name, null];
             if (op === "_avg") return [f.name, Number(v)];
-            return [f.name, decodeValue(this.contract, f, v)];
+            return [f.name, decodeValue(this.contract, f, v, this.decode)];
           }),
         );
       });

@@ -1,3 +1,4 @@
+import type { DecimalConstructor, DecimalMode } from "./codec.ts";
 import type { Contract, ModelDef } from "../schema/contract.ts";
 import { clientContract } from "../schema/contract.ts";
 import { formatTimestamp } from "./codec.ts";
@@ -181,9 +182,18 @@ export interface ExtensionArgs {
 
 export const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
+/** Settings the generator bakes into a client class (they shape its types). */
+export interface GeneratedConfig {
+  /** How Decimal fields are returned (generator option `decimal`, default "string"). */
+  decimal?: DecimalMode;
+  /** decimal.js' class, passed by clients generated with `decimal = "decimal.js"`. */
+  Decimal?: DecimalConstructor;
+}
+
 interface Shared {
   contract: Contract;
   options: ClientOptions;
+  config: GeneratedConfig;
   engine: Engine | undefined;
   driver: Driver | undefined;
 }
@@ -194,8 +204,8 @@ export class BaseClient {
   /** @internal */ _tx: Queryable | undefined;
   /** @internal */ _extensions: ExtensionArgs[];
 
-  constructor(contract: Contract, options: ClientOptions = {}) {
-    this._shared = { contract: clientContract(contract), options, engine: undefined, driver: options.driver };
+  constructor(contract: Contract, options: ClientOptions = {}, config: GeneratedConfig = {}) {
+    this._shared = { contract: clientContract(contract), options, config, engine: undefined, driver: options.driver };
     this._tx = undefined;
     this._extensions = [];
     this._install();
@@ -206,7 +216,10 @@ export class BaseClient {
   /** @internal */
   _engine(): Engine {
     const s = this._shared;
-    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), { omit: s.options.omit });
+    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), {
+      omit: s.options.omit,
+      decode: { ...(s.config.decimal ? { decimal: s.config.decimal } : {}), ...(s.config.Decimal ? { Decimal: s.config.Decimal } : {}) },
+    });
     return s.engine;
   }
 
@@ -425,10 +438,11 @@ function makeLogger(log: LogOption | undefined): ((e: QueryEvent) => void) | und
 }
 
 /** Used by generated code: `export const HanaClient = createClientClass(contract)`. */
-export function createClientClass(contract: Contract): new (options?: ClientOptions) => BaseClient {
+export function createClientClass(contract: Contract, config: GeneratedConfig = {}): new (options?: ClientOptions) => BaseClient {
+  if (config.decimal === "decimal.js" && !config.Decimal) throw new Error('createClientClass: decimal "decimal.js" needs the Decimal class');
   return class HanaClient extends BaseClient {
     constructor(options?: ClientOptions) {
-      super(contract, options);
+      super(contract, options, config);
     }
   };
 }

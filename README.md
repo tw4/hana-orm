@@ -76,6 +76,26 @@ model Post {
 Instead of separate fields the datasource also accepts
 `url = env("DATABASE_URL")` with `hana://user:password@host:port/?databaseName=DB&currentSchema=APP&encrypt=true`.
 
+#### Decimal values
+
+`Decimal` fields come back as strings by default, so no digit is lost. The generator option
+`decimal` changes that for one generated client:
+
+```
+generator client {
+  provider = "hana-orm"
+  output   = "./src/generated/hana"
+  decimal  = "decimal.js"   // "string" (default) | "number" | "decimal.js"
+}
+```
+
+- `"string"`: `"12345678901234.25"`; inputs may be strings or numbers.
+- `"number"`: JavaScript numbers. Values beyond about 15 significant digits are rounded.
+- `"decimal.js"`: [decimal.js](https://mikemcl.github.io/decimal.js/) `Decimal` instances; install
+  `decimal.js` in your project. Inputs may be `Decimal`, string or number.
+
+The generated types follow the mode. `_avg` is always a number.
+
 #### Ignoring fields and models
 
 `@ignore` on a field and `@@ignore` on a model keep the column or table in the schema, so
