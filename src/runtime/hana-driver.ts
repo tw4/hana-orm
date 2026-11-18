@@ -22,6 +22,8 @@ export interface ConnectionConfig {
 export interface HanaDriverOptions {
   /** Maximum open connections (default 10). */
   poolSize?: number;
+  /** Prepared statements kept per connection and reused for the same SQL (default 0: off). */
+  statementCacheSize?: number;
   /**
    * Milliseconds a statement may run. On timeout the connection is closed, which stops the
    * statement on the server, and a `QueryTimeoutError` is thrown. Default: no limit.
@@ -43,6 +45,7 @@ export interface HanaDriverOptions {
 
 // Minimal shape of @sap/hana-client we rely on.
 interface HanaStatement {
+  exec(params: unknown, cb: (err: Error | null, result: unknown) => void): void;
   execBatch(rows: unknown, cb: (err: Error | null, result: unknown) => void): void;
   drop(cb: (err: Error | null) => void): void;
 }
@@ -85,16 +88,53 @@ function promisify<T>(fn: (cb: (err: Error | null, r?: T) => void) => void): Pro
 class ConnectionQueryable implements Queryable {
   readonly conn: HanaConnection;
   private readonly onQuery: ((e: QueryEvent) => void) | undefined;
+  private readonly cacheSize: number;
+  /** Prepared statements by SQL text, least recently used first. */
+  private readonly statements = new Map<string, HanaStatement>();
   private readonly statementTimeout: number | undefined;
   /** Set when the connection must not be reused (timed out, lost, failed a check). */
   broken = false;
   /** When it went back to the idle list (performance.now()). */
   idleSince = 0;
 
-  constructor(conn: HanaConnection, onQuery?: (e: QueryEvent) => void, statementTimeout?: number) {
+  constructor(conn: HanaConnection, onQuery?: (e: QueryEvent) => void, statementTimeout?: number, statementCacheSize = 0) {
     this.conn = conn;
     this.onQuery = onQuery;
     this.statementTimeout = statementTimeout && statementTimeout > 0 ? statementTimeout : undefined;
+    this.cacheSize = Math.max(0, statementCacheSize);
+  }
+
+  /** The cached prepared statement for `sql`, preparing (and caching) it when needed. */
+  private async statement(sql: string): Promise<HanaStatement> {
+    const cached = this.statements.get(sql);
+    if (cached) {
+      this.statements.delete(sql);
+      this.statements.set(sql, cached);
+      return cached;
+    }
+    const stmt = await promisify<HanaStatement>((cb) => this.conn.prepare(sql, cb as (err: Error | null, s: unknown) => void));
+    this.statements.set(sql, stmt);
+    if (this.statements.size > this.cacheSize) {
+      const [oldSql, old] = this.statements.entries().next().value!;
+      this.statements.delete(oldSql);
+      old.drop(() => {});
+    }
+    return stmt;
+  }
+
+  private async exec<T>(sql: string, params: unknown): Promise<T> {
+    if (!this.cacheSize) return promisify<T>((cb) => this.conn.exec(sql, params, cb as (err: Error | null, r: unknown) => void));
+    const stmt = await this.statement(sql);
+    try {
+      return await promisify<T>((cb) => stmt.exec(params, cb as (err: Error | null, r: unknown) => void));
+    } catch (e) {
+      // a failed statement may be invalid now (e.g. a dropped table): prepare it again next time
+      if (this.statements.get(sql) === stmt) {
+        this.statements.delete(sql);
+        stmt.drop(() => {});
+      }
+      throw e;
+    }
   }
 
   /** Closes the connection; the server ends the session and with it a running statement. */
@@ -127,7 +167,7 @@ class ConnectionQueryable implements Queryable {
   private async run<T>(sql: string, params: unknown): Promise<T> {
     const started = performance.now();
     try {
-      return await this.limit(promisify<T>((cb) => this.conn.exec(sql, params, cb as (err: Error | null, r: unknown) => void)), sql);
+      return await this.limit(this.exec<T>(sql, params), sql);
     } catch (e) {
       if (e instanceof QueryTimeoutError) throw e;
       throw new DatabaseError(e, sql);
@@ -206,6 +246,7 @@ const disconnectedError = (): Error => new Error("The client has been disconnect
 export class HanaDriver implements Driver {
   private readonly config: ConnectionConfig;
   private readonly poolSize: number;
+  private readonly statementCacheSize: number;
   private readonly onQuery: ((e: QueryEvent) => void) | undefined;
   private readonly statementTimeout: number | undefined;
   private readonly idleTimeout: number;
@@ -223,6 +264,7 @@ export class HanaDriver implements Driver {
   constructor(config: ConnectionConfig, options: HanaDriverOptions = {}) {
     this.config = config;
     this.poolSize = Math.max(1, options.poolSize ?? 10);
+    this.statementCacheSize = options.statementCacheSize ?? 0;
     this.onQuery = options.onQuery;
     this.statementTimeout = options.statementTimeout;
     this.idleTimeout = Math.max(0, options.idleTimeout ?? 5 * 60 * 1000);
@@ -260,7 +302,7 @@ export class HanaDriver implements Driver {
     } catch (e) {
       throw new DatabaseError(e, "<connect>");
     }
-    const q = new ConnectionQueryable(conn, this.onQuery, this.statementTimeout);
+    const q = new ConnectionQueryable(conn, this.onQuery, this.statementTimeout, this.statementCacheSize);
     this.all.add(q);
     this.startSweeper();
     return q;

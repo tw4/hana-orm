@@ -145,6 +145,13 @@ export interface ClientOptions {
   slowQueryThreshold?: number;
   /** Fields left out of every result unless a query asks for them: `{ user: { passwordHash: true } }`. */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+  /** Compiled queries kept per query shape (default 500; 0 turns the plan cache off). */
+  planCacheSize?: number;
+  /**
+   * Prepared statements kept per pooled connection and reused for the same SQL text
+   * (default 0: off). Saves HANA from parsing the statement again.
+   */
+  statementCacheSize?: number;
   /** Defaults for every `$transaction` (`timeout`, `maxWait`, `isolationLevel`). */
   transactionOptions?: TransactionOptions;
 }
@@ -239,6 +246,7 @@ export class BaseClient {
     const s = this._shared;
     s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), {
       omit: s.options.omit,
+      ...(s.options.planCacheSize !== undefined ? { planCacheSize: s.options.planCacheSize } : {}),
       decode: { ...(s.config.decimal ? { decimal: s.config.decimal } : {}), ...(s.config.Decimal ? { Decimal: s.config.Decimal } : {}) },
     });
     return s.engine;
@@ -256,6 +264,7 @@ export class BaseClient {
           ...(o.statementTimeout !== undefined ? { statementTimeout: o.statementTimeout } : {}),
           ...(o.idleTimeout !== undefined ? { idleTimeout: o.idleTimeout } : {}),
           ...(o.idleCheckAfter !== undefined ? { idleCheckAfter: o.idleCheckAfter } : {}),
+          ...(o.statementCacheSize !== undefined ? { statementCacheSize: o.statementCacheSize } : {}),
         }),
         s.observer,
       );

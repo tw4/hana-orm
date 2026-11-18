@@ -13,6 +13,7 @@ import type { Queryable } from "./driver.ts";
 import { NotFoundError, ValidationError } from "./errors.ts";
 import { quoteIdent, tableRef } from "./sql.ts";
 import { buildWhere, compoundKey, isPlainObject, joinCondition, scalarCondition, SqlContext } from "./where.ts";
+import { PlanCache, planKey, type PlanCacheStats } from "./plan-cache.ts";
 
 type Row = Record<string, unknown>;
 type Args = Record<string, unknown>;
@@ -106,21 +107,28 @@ function nonNegativeInt(v: unknown, name: string): number {
 export interface EngineOptions {
   /** Client-wide `omit`, keyed by delegate name (`user`, `post`, ...). */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+  /** Compiled SELECTs kept per query shape (default 500; 0 disables the cache). */
+  planCacheSize?: number;
   /** How Decimal values are returned. */
   decode?: DecodeOptions;
 }
+
+/** Default number of cached query plans. */
+export const DEFAULT_PLAN_CACHE_SIZE = 500;
 
 export class Engine {
   readonly contract: Contract;
   readonly defaultSchema: string | undefined;
   /** Client-wide omitted fields per model name. */
   readonly globalOmit: Map<string, Record<string, boolean | undefined>>;
+  readonly #plans: PlanCache<Selection>;
   readonly decode: DecodeOptions;
 
   constructor(contract: Contract, defaultSchema?: string, options: EngineOptions = {}) {
     this.contract = contract;
     this.defaultSchema = defaultSchema;
     this.globalOmit = new Map();
+    this.#plans = new PlanCache(options.planCacheSize ?? DEFAULT_PLAN_CACHE_SIZE);
     this.decode = options.decode ?? {};
     for (const [key, value] of Object.entries(options.omit ?? {})) {
       if (value === undefined) continue;
@@ -432,7 +440,34 @@ export class Engine {
   }
 
   private async readMany(model: ModelDef, args: Args, q: Queryable, options: SelectOptions = {}): Promise<{ rows: Row[]; hidden: Set<string> }> {
-    return this.execSelect(model, this.buildSelect(model, args, options), args, q);
+    const top = Object.keys(options).length === 0;
+    return this.execSelect(model, top ? this.cachedSelect(model, args) : this.buildSelect(model, args, options), args, q);
+  }
+
+  /** `buildSelect` through the plan cache (top-level reads only). */
+  cachedSelect(model: ModelDef, args: Args): { sql: string; params: unknown[]; sel: Selection; reverse: boolean } {
+    const cache = this.#plans;
+    if (!cache.enabled) return this.buildSelect(model, args);
+    const shape = planKey(model, args);
+    if (!shape) {
+      cache.uncacheable++;
+      return this.buildSelect(model, args);
+    }
+    const where = (args.where ?? {}) as Row;
+    const params = (fields: ColumnFieldDef[]) => fields.map((f) => encodeValue(this.contract, f, where[f.name]));
+    const hit = cache.get(shape.key);
+    if (hit) return { sql: hit.sql, params: params(hit.whereFields), sel: hit.sel, reverse: hit.reverse };
+    const built = this.buildSelect(model, args);
+    // cache only when the shape really yields the where values as its parameters, in order
+    const extracted = params(shape.whereFields);
+    if (sameParams(extracted, built.params)) cache.set(shape.key, { sql: built.sql, sel: built.sel, reverse: built.reverse, whereFields: shape.whereFields });
+    else cache.uncacheable++;
+    return built;
+  }
+
+  /** Plan cache counters (`$metrics`, benchmarks). */
+  planCacheStats(): PlanCacheStats {
+    return this.#plans.stats();
   }
 
   private async execSelect(
@@ -1449,4 +1484,13 @@ function strip(rows: Row[], hidden: Set<string>): Row[] {
   if (!hidden.size) return rows;
   for (const r of rows) for (const h of hidden) delete r[h];
   return rows;
+}
+
+function sameParams(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((x, i) => {
+    const y = b[i];
+    if (Buffer.isBuffer(x) && Buffer.isBuffer(y)) return x.equals(y);
+    return Object.is(x, y);
+  });
 }
