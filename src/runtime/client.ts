@@ -124,6 +124,13 @@ export interface ClientOptions {
   log?: LogOption;
   /** Fields left out of every result unless a query asks for them: `{ user: { passwordHash: true } }`. */
   omit?: Record<string, Record<string, boolean | undefined> | undefined>;
+  /** Compiled queries kept per query shape (default 500; 0 turns the plan cache off). */
+  planCacheSize?: number;
+  /**
+   * Prepared statements kept per pooled connection and reused for the same SQL text
+   * (default 0: off). Saves HANA from parsing the statement again.
+   */
+  statementCacheSize?: number;
   /** Defaults for every `$transaction` (`timeout`, `maxWait`, `isolationLevel`). */
   transactionOptions?: TransactionOptions;
 }
@@ -196,7 +203,10 @@ export class BaseClient {
   /** @internal */
   _engine(): Engine {
     const s = this._shared;
-    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), { omit: s.options.omit });
+    s.engine ??= new Engine(s.contract, s.options.schema ?? resolveDefaultSchema(s.contract.datasource), {
+      omit: s.options.omit,
+      ...(s.options.planCacheSize !== undefined ? { planCacheSize: s.options.planCacheSize } : {}),
+    });
     return s.engine;
   }
 
@@ -205,7 +215,11 @@ export class BaseClient {
     const s = this._shared;
     if (!s.driver) {
       const config = resolveConnectionConfig(s.contract.datasource, s.options.datasource);
-      s.driver = new HanaDriver(config, { poolSize: s.options.poolSize, onQuery: makeLogger(s.options.log) });
+      s.driver = new HanaDriver(config, {
+        poolSize: s.options.poolSize,
+        onQuery: makeLogger(s.options.log),
+        ...(s.options.statementCacheSize !== undefined ? { statementCacheSize: s.options.statementCacheSize } : {}),
+      });
     }
     return s.driver;
   }

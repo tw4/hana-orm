@@ -21,6 +21,8 @@ export interface ConnectionConfig {
 export interface HanaDriverOptions {
   /** Maximum open connections (default 10). */
   poolSize?: number;
+  /** Prepared statements kept per connection and reused for the same SQL (default 0: off). */
+  statementCacheSize?: number;
   onQuery?: (e: QueryEvent) => void;
   /** @internal Replaces `@sap/hana-client` (tests). */
   hanaModule?: unknown;
@@ -28,6 +30,7 @@ export interface HanaDriverOptions {
 
 // Minimal shape of @sap/hana-client we rely on.
 interface HanaStatement {
+  exec(params: unknown, cb: (err: Error | null, result: unknown) => void): void;
   execBatch(rows: unknown, cb: (err: Error | null, result: unknown) => void): void;
   drop(cb: (err: Error | null) => void): void;
 }
@@ -70,16 +73,53 @@ function promisify<T>(fn: (cb: (err: Error | null, r?: T) => void) => void): Pro
 class ConnectionQueryable implements Queryable {
   readonly conn: HanaConnection;
   private readonly onQuery: ((e: QueryEvent) => void) | undefined;
+  private readonly cacheSize: number;
+  /** Prepared statements by SQL text, least recently used first. */
+  private readonly statements = new Map<string, HanaStatement>();
 
-  constructor(conn: HanaConnection, onQuery?: (e: QueryEvent) => void) {
+  constructor(conn: HanaConnection, onQuery?: (e: QueryEvent) => void, statementCacheSize = 0) {
     this.conn = conn;
     this.onQuery = onQuery;
+    this.cacheSize = Math.max(0, statementCacheSize);
+  }
+
+  /** The cached prepared statement for `sql`, preparing (and caching) it when needed. */
+  private async statement(sql: string): Promise<HanaStatement> {
+    const cached = this.statements.get(sql);
+    if (cached) {
+      this.statements.delete(sql);
+      this.statements.set(sql, cached);
+      return cached;
+    }
+    const stmt = await promisify<HanaStatement>((cb) => this.conn.prepare(sql, cb as (err: Error | null, s: unknown) => void));
+    this.statements.set(sql, stmt);
+    if (this.statements.size > this.cacheSize) {
+      const [oldSql, old] = this.statements.entries().next().value!;
+      this.statements.delete(oldSql);
+      old.drop(() => {});
+    }
+    return stmt;
+  }
+
+  private async exec<T>(sql: string, params: unknown): Promise<T> {
+    if (!this.cacheSize) return promisify<T>((cb) => this.conn.exec(sql, params, cb as (err: Error | null, r: unknown) => void));
+    const stmt = await this.statement(sql);
+    try {
+      return await promisify<T>((cb) => stmt.exec(params, cb as (err: Error | null, r: unknown) => void));
+    } catch (e) {
+      // a failed statement may be invalid now (e.g. a dropped table): prepare it again next time
+      if (this.statements.get(sql) === stmt) {
+        this.statements.delete(sql);
+        stmt.drop(() => {});
+      }
+      throw e;
+    }
   }
 
   private async run<T>(sql: string, params: unknown): Promise<T> {
     const started = performance.now();
     try {
-      return await promisify<T>((cb) => this.conn.exec(sql, params, cb as (err: Error | null, r: unknown) => void));
+      return await this.exec<T>(sql, params);
     } catch (e) {
       throw new DatabaseError(e, sql);
     } finally {
@@ -122,6 +162,7 @@ class ConnectionQueryable implements Queryable {
 export class HanaDriver implements Driver {
   private readonly config: ConnectionConfig;
   private readonly poolSize: number;
+  private readonly statementCacheSize: number;
   private readonly onQuery: ((e: QueryEvent) => void) | undefined;
   private readonly idle: ConnectionQueryable[] = [];
   private readonly waiters: ((c: ConnectionQueryable) => void)[] = [];
@@ -132,6 +173,7 @@ export class HanaDriver implements Driver {
   constructor(config: ConnectionConfig, options: HanaDriverOptions = {}) {
     this.config = config;
     this.poolSize = Math.max(1, options.poolSize ?? 10);
+    this.statementCacheSize = options.statementCacheSize ?? 0;
     this.onQuery = options.onQuery;
     this.hana = options.hanaModule as HanaModule | undefined;
   }
@@ -155,7 +197,7 @@ export class HanaDriver implements Driver {
     } catch (e) {
       throw new DatabaseError(e, "<connect>");
     }
-    return new ConnectionQueryable(conn, this.onQuery);
+    return new ConnectionQueryable(conn, this.onQuery, this.statementCacheSize);
   }
 
   /** Takes an idle connection, opens a new one, or waits for one (at most `maxWait` ms). */

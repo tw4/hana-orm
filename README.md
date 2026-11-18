@@ -146,6 +146,18 @@ Supported: `findMany`, `findFirst(OrThrow)`, `findUnique(OrThrow)`, `count`, `ag
 
 Client options: `new HanaClient({ log: true, poolSize: 10, schema: "APP", datasource: { host: "..." } })`.
 
+#### Query plan cache
+
+The client keeps the SQL it compiled for a query shape (model, operation, the keys of `where`,
+`select`, `omit`, `orderBy`, `take`, `skip` — not the values) and reuses it, which roughly halves
+the client's CPU time per simple lookup (`node bench/plan-cache.ts`). Only shapes whose SQL does
+not depend on the values are cached: plain equality in `where`, no `null`, filters, relations,
+`include`, `distinct` or `cursor`; everything else is compiled as before. `planCacheSize`
+(default 500, `0` = off) bounds the cache.
+
+`statementCacheSize: 64` additionally keeps prepared statements per pooled connection and
+reuses them for the same SQL text, so HANA does not parse it again (off by default).
+
 #### Many-to-many relations
 
 Two list fields that point at each other, with no `@relation(fields, references)` side, form an
