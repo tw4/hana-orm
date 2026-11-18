@@ -405,12 +405,16 @@ export class BaseClient {
   }
 
   /** `db.select({ id: tables.user.id, title: tables.post.title }).from(tables.user)…`; no fields: all columns. */
-  select<S extends Selection>(fields?: S): SelectStart<S | "all"> {
+  select(): SelectStart<"all">;
+  select<S extends Selection>(fields: S): SelectStart<S>;
+  select(fields?: Selection): SelectStart<unknown> {
     return new SelectStart(this._builderHost(), fields, false);
   }
 
   /** `SELECT DISTINCT`. */
-  selectDistinct<S extends Selection>(fields?: S): SelectStart<S | "all"> {
+  selectDistinct(): SelectStart<"all">;
+  selectDistinct<S extends Selection>(fields: S): SelectStart<S>;
+  selectDistinct(fields?: Selection): SelectStart<unknown> {
     return new SelectStart(this._builderHost(), fields, true);
   }
 

@@ -76,6 +76,45 @@ model Post {
 Instead of separate fields the datasource also accepts
 `url = env("DATABASE_URL")` with `hana://user:password@host:port/?databaseName=DB&currentSchema=APP&encrypt=true`.
 
+#### Schema in TypeScript
+
+The schema can also be written in TypeScript. It produces the same contract as the
+equivalent `.hana` file (same validation, same contract hash):
+
+```ts
+import { hanaSchema, hanaTable, hanaEnum, enumColumn, relations, one, many, int, string, dateTime, tablesOf, createClient } from "hana-orm";
+
+const Role = hanaEnum("Role", ["USER", { name: "ADMIN", map: "admin" }]);
+const User = hanaTable("User", {
+  id: int().primaryKey().autoincrement(),
+  email: string(320).unique(),
+  name: string().optional(),
+  role: enumColumn(Role).default("USER"),
+  createdAt: dateTime().defaultNow().map("CREATED_AT"),
+}, { map: "USERS" });
+const Post = hanaTable("Post", { id: int().primaryKey().autoincrement(), title: string(), authorId: int().optional() });
+
+export const schema = hanaSchema({
+  enums: [Role],
+  tables: [User, Post],
+  relations: [
+    relations(User, { posts: many(Post) }),
+    relations(Post, { author: one(User, { optional: true, fields: ["authorId"], references: ["id"] }) }),
+  ],
+});
+
+type UserRow = typeof User.$inferSelect;    // { id: number; email: string; name: string | null; … }
+type NewUser = typeof User.$inferInsert;    // { email: string; id?: number; name?: string | null; … }
+```
+
+Without running the generator, `tablesOf(schema)` gives typed tables for the SQL-like builder
+and `createClient(schema, options)` a client (its object API is untyped; generate a client for
+typed `db.user.findMany`). Relations are declared after the tables so they can refer to each
+other. Column helpers: `int bigint float decimal(p, s) boolean string(length) text dateTime
+date json bytes enumColumn(e)`, with `.optional() .primaryKey() .unique() .default(v)
+.defaultNow() .autoincrement() .uuid() .cuid() .dbGenerated(sql) .updatedAt() .map(name)
+.db(nativeType, ...args) .ignore() .doc(text)`.
+
 #### Ignoring fields and models
 
 `@ignore` on a field and `@@ignore` on a model keep the column or table in the schema, so
