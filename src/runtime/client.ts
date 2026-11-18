@@ -544,58 +544,6 @@ export class BaseClient {
     );
   }
 
-  // ---- SQL-like query builder (tables from the generated `tables`) ----------------------------
-
-  /** @internal What the builders need to render and run. */
-  _builderHost(): BuilderHost {
-    const e = this._engine();
-    return {
-      contract: e.contract,
-      defaultSchema: e.defaultSchema,
-      run: (write, fn) => this._run(write, fn),
-      createMany: async (model, rows, q) => (await e.createMany(model, { data: rows }, q)).count,
-    };
-  }
-
-  /** `db.select({ id: tables.user.id, title: tables.post.title }).from(tables.user)…`; no fields: all columns. */
-  select<S extends Selection>(fields?: S): SelectStart<S | "all"> {
-    return new SelectStart(this._builderHost(), fields, false);
-  }
-
-  /** `SELECT DISTINCT`. */
-  selectDistinct<S extends Selection>(fields?: S): SelectStart<S | "all"> {
-    return new SelectStart(this._builderHost(), fields, true);
-  }
-
-  /** `db.insert(tables.user).values([...])`: resolves with the inserted row count. */
-  insert<T extends { readonly [TABLE]: unknown }>(table: T): InsertBuilder<InsertOf<T>> {
-    return new InsertBuilder(this._builderHost(), table as never);
-  }
-
-  /** `db.update(tables.user).set({ name: "x" }).where(eq(tables.user.id, 1))`: resolves with the row count. */
-  update<T extends { readonly [TABLE]: unknown }>(table: T): UpdateStart<T> {
-    return new UpdateStart(this._builderHost(), table as never);
-  }
-
-  /** `db.delete(tables.user).where(...)`: resolves with the row count. */
-  delete<T extends { readonly [TABLE]: unknown }>(table: T): DeleteBuilder {
-    return new DeleteBuilder(this._builderHost(), table as never);
-  }
-
-  /** Names a query for a `WITH` clause: `const recent = db.$with("recent").as(db.select()…)`. */
-  $with<A extends string>(name: A): WithStart<A> {
-    return new WithStart(name);
-  }
-
-  /** Starts a select with CTEs: `db.with(recent).select().from(recent)`. */
-  with(...ctes: Cte<string, Record<string, unknown>>[]): { select<S extends Selection>(fields?: S): SelectStart<S | "all">; selectDistinct<S extends Selection>(fields?: S): SelectStart<S | "all"> } {
-    const host = this._builderHost();
-    return {
-      select: (fields) => new SelectStart(host, fields, false, ctes),
-      selectDistinct: (fields) => new SelectStart(host, fields, true, ctes),
-    };
-  }
-
   /**
    * Runs the items in order on one connection inside one transaction and resolves with their
    * results as a tuple. Consecutive builder `update` / `delete` statements with the same SQL text
@@ -637,6 +585,62 @@ export class BaseClient {
       }
       return results as { -readonly [K in keyof P]: Awaited<P[K]> };
     }, options);
+  }
+
+  // ---- SQL-like query builder (tables from the generated `tables`) ----------------------------
+
+  /** @internal What the builders need to render and run. */
+  _builderHost(): BuilderHost {
+    const e = this._engine();
+    return {
+      contract: e.contract,
+      defaultSchema: e.defaultSchema,
+      run: (write, fn) => this._run(write, fn),
+      createMany: async (model, rows, q) => (await e.createMany(model, { data: rows }, q)).count,
+    };
+  }
+
+  /** `db.select({ id: tables.user.id, title: tables.post.title }).from(tables.user)…`; no fields: all columns. */
+  select(): SelectStart<"all">;
+  select<S extends Selection>(fields: S): SelectStart<S>;
+  select(fields?: Selection): SelectStart<unknown> {
+    return new SelectStart(this._builderHost(), fields, false);
+  }
+
+  /** `SELECT DISTINCT`. */
+  selectDistinct(): SelectStart<"all">;
+  selectDistinct<S extends Selection>(fields: S): SelectStart<S>;
+  selectDistinct(fields?: Selection): SelectStart<unknown> {
+    return new SelectStart(this._builderHost(), fields, true);
+  }
+
+  /** `db.insert(tables.user).values([...])`: resolves with the inserted row count. */
+  insert<T extends { readonly [TABLE]: unknown }>(table: T): InsertBuilder<InsertOf<T>> {
+    return new InsertBuilder(this._builderHost(), table as never);
+  }
+
+  /** `db.update(tables.user).set({ name: "x" }).where(eq(tables.user.id, 1))`: resolves with the row count. */
+  update<T extends { readonly [TABLE]: unknown }>(table: T): UpdateStart<T> {
+    return new UpdateStart(this._builderHost(), table as never);
+  }
+
+  /** `db.delete(tables.user).where(...)`: resolves with the row count. */
+  delete<T extends { readonly [TABLE]: unknown }>(table: T): DeleteBuilder {
+    return new DeleteBuilder(this._builderHost(), table as never);
+  }
+
+  /** Names a query for a `WITH` clause: `const recent = db.$with("recent").as(db.select()…)`. */
+  $with<A extends string>(name: A): WithStart<A> {
+    return new WithStart(name);
+  }
+
+  /** Starts a select with CTEs: `db.with(recent).select().from(recent)`. */
+  with(...ctes: Cte<string, Record<string, unknown>>[]): { select<S extends Selection>(fields?: S): SelectStart<S | "all">; selectDistinct<S extends Selection>(fields?: S): SelectStart<S | "all"> } {
+    const host = this._builderHost();
+    return {
+      select: (fields) => new SelectStart(host, fields, false, ctes),
+      selectDistinct: (fields) => new SelectStart(host, fields, true, ctes),
+    };
   }
 
   /** Returns a new client with the extension applied; the original is unchanged. */

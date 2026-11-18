@@ -8,3 +8,30 @@ export type * from "./schema/contract.ts";
 export { clientContract } from "./schema/contract.ts";
 export type * from "./schema/ast.ts";
 export { generateClient, type GenerateOptions } from "./generator/client.ts";
+export {
+  hanaSchema,
+  hanaTable,
+  hanaEnum,
+  enumColumn,
+  one,
+  many,
+  relations,
+  env,
+  int,
+  bigint,
+  float,
+  decimal,
+  boolean,
+  string,
+  text,
+  dateTime,
+  date,
+  json,
+  bytes,
+  tablesOf,
+  createClient,
+  ColumnBuilder,
+  TableDefinition,
+  RelationBuilder,
+} from "./schema/dsl.ts";
+export type { HanaSchema, TablesOf, SelectRow, InsertRow, TableOptions, RelationOptions, RelationsDefinition, EnumDefinition, DefaultValue } from "./schema/dsl.ts";
