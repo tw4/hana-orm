@@ -668,7 +668,7 @@ and deleting rows. It runs through the client, so values are converted like in y
 database errors are shown as they are. Rows are addressed by their primary key (or a unique
 field); models without one, and views, are read-only. `--read-only` refuses every change.
 
-The server listens on `127.0.0.1` only. Each run prints a URL with a random token. The page and
+The server listens on `127.0.0.1` by default. Each run prints a URL with a random token. The page and
 every API call need that token, and requests under another host name are refused (no DNS
 rebinding). `--host 0.0.0.0` makes it reachable from other machines: anyone with the URL can
 then read and change the data.
