@@ -1,0 +1,52 @@
+---
+// Client-side effects for the home page: reveal on scroll, a pointer spotlight on cards,
+// and copy buttons. Without JavaScript every element is simply visible.
+---
+
+<script>
+  const root = document.documentElement;
+  root.classList.add("ho-js");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Reveal sections as they scroll into view (once).
+  const targets = document.querySelectorAll<HTMLElement>(".ho-reveal, .ho-term");
+  if (reduced || !("IntersectionObserver" in window)) {
+    targets.forEach((el) => el.classList.add("is-visible"));
+  } else {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          e.target.classList.add("is-visible");
+          io.unobserve(e.target);
+        }
+      },
+      { rootMargin: "0px 0px -12% 0px", threshold: 0.15 },
+    );
+    targets.forEach((el) => io.observe(el));
+  }
+
+  // A soft light that follows the pointer over cards.
+  if (!reduced) {
+    document.querySelectorAll<HTMLElement>("[data-spotlight]").forEach((card) => {
+      card.addEventListener("pointermove", (ev) => {
+        const r = card.getBoundingClientRect();
+        card.style.setProperty("--lx", `${ev.clientX - r.left}px`);
+        card.style.setProperty("--ly", `${ev.clientY - r.top}px`);
+      });
+    });
+  }
+
+  // Copy buttons.
+  document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy ?? "");
+        btn.classList.add("is-done");
+        setTimeout(() => btn.classList.remove("is-done"), 1400);
+      } catch {
+        /* clipboard not available: nothing to do */
+      }
+    });
+  });
+</script>

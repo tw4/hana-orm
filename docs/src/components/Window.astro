@@ -1,0 +1,68 @@
+---
+// A product-window card: title bar with traffic lights, an address and a status pill,
+// then a two-column body with a description on the left and a live preview on the right.
+import { Icon } from "@astrojs/starlight/components";
+
+interface Props {
+  /** Shown in the title bar, like an address. */
+  address: string;
+  status: string;
+  name: string;
+  kicker: string;
+  /** Glow and button color: teal, violet, amber or sky. */
+  tone?: "teal" | "violet" | "amber" | "sky";
+  tags?: string[];
+  command?: string;
+  primary: { text: string; href: string };
+  secondary?: { text: string; href: string };
+  /** Label of the preview tab, if any. */
+  tab?: string;
+}
+
+const { address, status, name, kicker, tone = "teal", tags = [], command, primary, secondary, tab } = Astro.props;
+---
+
+<article class:list={["ho-window", "ho-reveal", `ho-tone-${tone}`]} data-spotlight>
+  <header class="ho-window__bar">
+    <span class="ho-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="ho-window__address">{address}</span>
+    <span class="ho-pill"><i aria-hidden="true"></i>{status}</span>
+  </header>
+  <div class="ho-window__body">
+    <div class="ho-window__info">
+      <div class="ho-window__head">
+        <span class="ho-gem" aria-hidden="true"></span>
+        <div>
+          <h3 class="ho-window__name">{name}</h3>
+          <p class="ho-window__kicker">{kicker}</p>
+        </div>
+      </div>
+      <div class="ho-window__text"><slot name="text" /></div>
+      {tags.length > 0 && <ul class="ho-tags">{tags.map((t) => <li>{t}</li>)}</ul>}
+      {
+        command && (
+          <div class="ho-command">
+            <code>
+              <span aria-hidden="true">$</span> {command}
+            </code>
+            <button type="button" class="ho-copy" data-copy={command} aria-label={`Copy: ${command}`}>
+              <Icon name="document" size="1em" class="ho-copy__idle" />
+              <Icon name="approve-check" size="1em" class="ho-copy__done" />
+            </button>
+          </div>
+        )
+      }
+      <div class="ho-window__actions">
+        <a class="ho-btn ho-btn--tone" href={primary.href}>
+          {primary.text}
+          <Icon name="right-arrow" size="1em" />
+        </a>
+        {secondary && <a class="ho-btn ho-btn--ghost" href={secondary.href}>{secondary.text}</a>}
+      </div>
+    </div>
+    <div class="ho-window__preview">
+      {tab && <div class="ho-window__tab"><span>{tab}</span></div>}
+      <slot name="preview" />
+    </div>
+  </div>
+</article>

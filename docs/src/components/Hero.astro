@@ -1,0 +1,50 @@
+---
+// Home page hero: an orb with orbiting tags, a light beam and a staggered headline.
+// Pure CSS animation; everything is static when the visitor prefers reduced motion.
+import { Icon } from "@astrojs/starlight/components";
+import logo from "../assets/logo.svg?raw";
+
+const { data } = Astro.locals.starlightRoute.entry;
+const { title = data.title, tagline, actions = [] } = data.hero || {};
+
+const outer = ["TypeScript", "SAP HANA", "HANA Cloud", "Migrations", "Studio"];
+const inner = ["BigInt", "Decimal", "Full-text", "Query builder"];
+const place = (i: number, n: number, offset: number) => `--a:${(360 / n) * i + offset}deg`;
+---
+
+<section class="ho-hero" aria-labelledby="_top">
+  <div class="ho-hero__grid" aria-hidden="true"></div>
+  <div class="ho-hero__visual" aria-hidden="true">
+    <div class="ho-beam"></div>
+    <div class="ho-orbit ho-orbit--outer" style="--t:80s">
+      {outer.map((t, i) => <span class="ho-chip" style={place(i, outer.length, -20)}><span>{t}</span></span>)}
+    </div>
+    <div class="ho-orbit ho-orbit--inner" style="--t:55s">
+      {inner.map((t, i) => <span class="ho-chip" style={place(i, inner.length, 25)}><span>{t}</span></span>)}
+    </div>
+    <div class="ho-orb"><span class="ho-orb__logo" set:html={logo} /></div>
+  </div>
+
+  <div class="ho-hero__copy">
+    <h1 id="_top" class="ho-hero__title" data-page-title>
+      {title.split(". ").map((line, i, all) => <span class="ho-rise" style={`--d:${120 + i * 140}ms`}>{line}{i < all.length - 1 ? "." : ""}</span>)}
+    </h1>
+    {tagline && <p class="ho-hero__tagline ho-rise" style="--d:420ms" set:html={tagline} />}
+    {
+      actions.length > 0 && (
+        <div class="ho-hero__actions ho-rise" style="--d:540ms">
+          {actions.map(({ text, link, icon, variant }) => (
+            <a class:list={["ho-btn", variant === "minimal" ? "ho-btn--ghost" : "ho-btn--solid"]} href={link}>
+              {variant === "minimal" && <Icon name="github" size="1.05em" />}
+              <span>{text}</span>
+              {icon && variant !== "minimal" && <Icon name={icon.name ?? icon} size="1em" />}
+            </a>
+          ))}
+        </div>
+      )
+    }
+    <p class="ho-hero__meta ho-rise" style="--d:660ms">
+      npm&nbsp;i&nbsp;hana-orm@next <span>·</span> Node.js&nbsp;22+ <span>·</span> Apache-2.0
+    </p>
+  </div>
+</section>
