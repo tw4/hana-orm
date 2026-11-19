@@ -681,14 +681,26 @@ or use `--print`.
 npm install
 npm run typecheck
 npm test                    # unit + type tests, no database needed
-npm run test:integration    # needs HANA_* env vars; writes only to temporary tables
+npm run test:integration    # needs a HANA, see below
+```
+
+The integration tests read the connection from `HANA_*` variables or from the file named by
+`HANA_ORM_ENV_FILE` (for example `.env.test`), and skip themselves when there is none. By
+default they only write to local temporary tables. With `HANA_ORM_ALLOW_DDL=1` the tests that
+need DDL (migrations, `db pull`, `createMany`, many-to-many, full-text) also run; they create
+their own schemas (`HANA_ORM_IT_…`, `HANA_ORM_FT_…`) and drop them at the end, so use a local or
+test database:
+
+```sh
+HANA_ORM_ENV_FILE=.env.test HANA_ORM_ALLOW_DDL=1 npm run test:integration
 ```
 
 `docker-compose.hana.yml` starts a local SAP HANA Express for the integration tests (see the
-comments in the file). The **HANA integration** workflow does the same in CI every night and
-on demand (Actions → HANA integration → Run workflow, optionally on a larger or self-hosted
-runner): it starts HANA Express, checks the connection with `node scripts/check-hana.ts` and
-runs `npm run test:integration` with `HANA_ORM_ALLOW_DDL=1`, failing if any test was skipped.
+comments in the file; on Apple Silicon it runs under emulation). The **HANA integration**
+workflow does the same in CI every night and on demand (Actions → HANA integration → Run
+workflow, optionally on a larger or self-hosted runner): it starts HANA Express, checks the
+connection with `node scripts/check-hana.ts` and runs `npm run test:integration` with
+`HANA_ORM_ALLOW_DDL=1`, failing if any test was skipped.
 
 ## License
 
