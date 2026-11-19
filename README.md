@@ -714,11 +714,18 @@ HANA_ORM_ENV_FILE=.env.test HANA_ORM_ALLOW_DDL=1 npm run test:integration
 ```
 
 `docker-compose.hana.yml` starts a local SAP HANA Express for the integration tests (see the
-comments in the file; on Apple Silicon it runs under emulation). The **HANA integration**
-workflow does the same in CI every night and on demand (Actions → HANA integration → Run
-workflow, optionally on a larger or self-hosted runner): it starts HANA Express, checks the
-connection with `node scripts/check-hana.ts` and runs `npm run test:integration` with
-`HANA_ORM_ALLOW_DDL=1`, failing if any test was skipped.
+comments in the file; on Apple Silicon it runs under emulation). HANA does not run in GitHub
+Actions: CI there runs typecheck, unit tests and build only. Before merging, run the full check
+locally:
+
+```sh
+npm run ci:local            # typecheck, unit tests, build, HANA check, all integration tests
+npm run ci:local -- --bench # also the HANA benchmark
+```
+
+`ci:local` uses `.env.test` (or `HANA_ORM_ENV_FILE`), starts a stopped `hxe` or `hana-orm-hxe`
+container when HANA does not answer (`HANA_CONTAINER` names another one), fails if any
+integration test was skipped and writes its logs to `.local/ci/`.
 
 ## License
 
