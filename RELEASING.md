@@ -8,6 +8,9 @@ published when a maintainer approves them with 2FA.
 | `0.2.0-beta.1` (has a `-`) | `next` | no (`npm install hana-orm@next`) | pre-release |
 | `0.2.0` | `latest` | yes | release |
 
+While npm has no stable version yet, pre-releases also go to `latest`, so the npm page and a
+plain `npm install hana-orm` show them (`scripts/release-notes.ts dist-tag`).
+
 ## Steps
 
 1. Run `npm run ci:local -- --bench` on the commit to release. The HANA integration tests do not

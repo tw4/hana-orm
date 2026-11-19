@@ -28,6 +28,12 @@ export default defineConfig({
         ThemeSelect: "./src/components/ThemeSelect.astro",
       },
       head: [
+        // link previews (social cards)
+        { tag: "meta", attrs: { property: "og:image", content: "https://tw4.github.io/hana-orm/social.png" } },
+        { tag: "meta", attrs: { property: "og:image:width", content: "1280" } },
+        { tag: "meta", attrs: { property: "og:image:height", content: "640" } },
+        { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
+        { tag: "meta", attrs: { name: "twitter:image", content: "https://tw4.github.io/hana-orm/social.png" } },
         { tag: "link", attrs: { rel: "preconnect", href: "https://fonts.googleapis.com" } },
         { tag: "link", attrs: { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" } },
         {
