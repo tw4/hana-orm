@@ -1,0 +1,116 @@
+---
+title: hana-orm
+description: A type-safe TypeScript ORM for SAP HANA. A declarative schema, a generated client whose types follow your queries, and migrations you can read.
+template: splash
+hero:
+  tagline: A type-safe TypeScript ORM for SAP HANA. Describe your data once, get a client whose types follow every query, and ship migrations as plain, reviewable SQL.
+  image:
+    file: ../../assets/logo.svg
+  actions:
+    - text: Get started
+      link: /hana-orm/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/tw4/hana-orm
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
+
+:::note[Release candidate]
+`1.0.0-rc.1` is available as `npm install hana-orm@next`. The API is meant to be stable for 1.0;
+breaking changes until then are listed in the
+[changelog](https://github.com/tw4/hana-orm/blob/main/CHANGELOG.md).
+:::
+
+## At a glance
+
+<Tabs>
+  <TabItem label="schema.hana">
+
+```hana
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @db.NVarChar(320)
+  name      String?
+  createdAt DateTime @default(now())
+  posts     Post[]
+}
+
+model Post {
+  id       Int    @id @default(autoincrement())
+  title    String
+  authorId Int?
+  author   User?  @relation(fields: [authorId], references: [id])
+}
+```
+
+  </TabItem>
+  <TabItem label="Query">
+
+```ts
+import { HanaClient } from "./generated/hana/index.ts";
+
+const db = new HanaClient();
+
+const users = await db.user.findMany({
+  where: { email: { endsWith: "@example.com" } },
+  select: { id: true, email: true, posts: { select: { title: true }, take: 3 } },
+  orderBy: { createdAt: "desc" },
+});
+// users: { id: number; email: string; posts: { title: string }[] }[]
+```
+
+  </TabItem>
+  <TabItem label="Migrate">
+
+```sh
+npx hana-orm migrate plan --name init   # writes migrations/<timestamp>_init/migration.sql
+npx hana-orm migrate deploy             # applies it in one transaction
+```
+
+  </TabItem>
+</Tabs>
+
+## Why hana-orm
+
+<CardGrid>
+  <Card title="Pure TypeScript" icon="seti:typescript">
+    No query engine binary. Queries are compiled to SQL in your process and run through SAP's own
+    `@sap/hana-client`.
+  </Card>
+  <Card title="Types follow the query" icon="approve-check">
+    `select`, `include` and `omit` shape the result type, down to nested relations and computed
+    fields.
+  </Card>
+  <Card title="Made for HANA" icon="puzzle">
+    Identity columns, `@db.*` native types, several schemas, tenant databases, full-text indexes,
+    sequences, HANA Cloud over TLS. `BIGINT` stays exact, `DECIMAL` loses no digit.
+  </Card>
+  <Card title="Migrations you can read" icon="document">
+    Each migration is a folder with the literal SQL that runs. Planning needs no database;
+    deploying runs each migration in one transaction, behind a lock.
+  </Card>
+  <Card title="Two query styles" icon="list-format">
+    An object API with nested writes and transactions, and a SQL-like builder with joins,
+    subqueries and `WITH`, sharing one client.
+  </Card>
+  <Card title="Tools around it" icon="laptop">
+    `db pull` for existing databases, a local data browser, a formatter, typed SQL from `.sql`
+    files and a VS Code extension.
+  </Card>
+</CardGrid>
+
+## Explore the docs
+
+<CardGrid>
+  <LinkCard title="Getting started" description="Install, connect, write a schema and run your first query." href="/hana-orm/getting-started/" />
+  <LinkCard title="How it works" description="Schema, contract, client and migrations, and how they fit together." href="/hana-orm/concepts/" />
+  <LinkCard title="Schema" description="Models, relations, enums, views, indexes and HANA type mapping." href="/hana-orm/schema/" />
+  <LinkCard title="Client" description="Reading, filtering, writing, transactions, raw SQL and the query builder." href="/hana-orm/client/" />
+  <LinkCard title="Migrations" description="Plan, deploy, drift, existing databases and production deploys." href="/hana-orm/migrations/" />
+  <LinkCard title="Tools" description="The CLI reference, studio and the VS Code extension." href="/hana-orm/tools/" />
+  <LinkCard title="Guides" description="Moving from Prisma, TypeORM or the raw driver; testing; several schemas." href="/hana-orm/guides/" />
+  <LinkCard title="Reference" description="Environment variables, HANA specifics, troubleshooting, package exports." href="/hana-orm/reference/" />
+</CardGrid>

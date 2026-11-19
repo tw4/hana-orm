@@ -1,0 +1,79 @@
+---
+title: Schema
+sidebar:
+  label: Overview
+  order: 0
+---
+
+The schema describes your database connection, where the client is generated and your data
+model. It is written in `.hana` files (a language close to Prisma's schema language) or in
+[TypeScript](/hana-orm/schema/typescript/).
+
+```hana
+// schema.hana
+datasource db {
+  provider = "hana"
+  url      = env("DATABASE_URL")
+  schema   = "APP"
+}
+
+generator client {
+  provider = "hana-orm"
+  output   = "./src/generated/hana"
+}
+
+/// A customer of the shop
+model Customer {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @db.NVarChar(320)
+  name      String?
+  createdAt DateTime @default(now()) @map("CREATED_AT")
+  orders    Order[]
+
+  @@map("CUSTOMERS")
+}
+```
+
+## Building blocks
+
+| block | purpose | page |
+|---|---|---|
+| `datasource` | the HANA connection and default schema | [Datasource and generator](/hana-orm/schema/datasource-generator/) |
+| `generator` | where and how the client is generated | [Datasource and generator](/hana-orm/schema/datasource-generator/) |
+| `model` | a table | [Models and fields](/hana-orm/schema/models/) |
+| `view` | a read-only model over a database view | [Enums and views](/hana-orm/schema/enums-views/) |
+| `enum` | a fixed set of values | [Enums and views](/hana-orm/schema/enums-views/) |
+
+## Syntax
+
+- One declaration per block; fields one per line: `name Type attributes…`.
+- `?` after a type makes the field optional (nullable column), `[]` makes it a list (only for
+  relations).
+- Field attributes start with `@`, block attributes with `@@`.
+- `//` is a comment. `///` is a doc comment: it is shown in the generated types and becomes the
+  table or column comment in the database.
+- Strings use double quotes; lists use brackets: `@@index([a, b])`.
+- Values in `datasource` and `generator` are literals or `env("NAME")`.
+
+## Pages in this section
+
+- [Datasource and generator](/hana-orm/schema/datasource-generator/)
+- [Models and fields](/hana-orm/schema/models/): scalar types, field attributes, defaults, names
+- [Relations](/hana-orm/schema/relations/): one-to-one, one-to-many, many-to-many, self relations,
+  referential actions
+- [Enums and views](/hana-orm/schema/enums-views/)
+- [Indexes and constraints](/hana-orm/schema/indexes-constraints/): primary keys, unique, indexes,
+  full-text indexes, check constraints, sequences, comments
+- [Ignoring fields and models](/hana-orm/schema/ignoring/)
+- [Several files and formatting](/hana-orm/schema/multi-file/)
+- [Schema in TypeScript](/hana-orm/schema/typescript/)
+- [Type mapping](/hana-orm/schema/types/): schema types, HANA columns and TypeScript types
+
+## Checking the schema
+
+```sh
+npx hana-orm validate   # errors with file, line and column
+npx hana-orm format     # canonical layout
+```
+
+The [VS Code extension](/hana-orm/tools/vscode/) shows the same errors while you type.
