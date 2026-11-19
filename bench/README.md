@@ -23,10 +23,9 @@ environment.
 
 ### Tracking per release
 
-- The **HANA integration** workflow runs the benchmark every night after the integration tests,
-  adds the table to the run summary and keeps `bench-results.json` / `.md` as an artifact for
-  90 days.
-- For each release, copy the results of the release commit's run to
+- `npm run ci:local -- --bench` runs the benchmark after the integration tests and writes
+  `.local/ci/bench-results.json` / `.md`.
+- For each release, run it on the release commit and copy the results to
   `bench/results/<version>.md` (and `.json`), so changes between releases stay visible in the
   repository.
 

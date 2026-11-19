@@ -18,8 +18,9 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
   connection pool health checks, reconnect, `statementTimeout` and graceful shutdown (#15).
 - SQL-like query builder with typed tables (#28), `sql` fragments in object-API `where` (#31),
   prepared queries with placeholders (#30), `$batch` (#32), schema definitions in TypeScript (#29).
-- CI: nightly HANA Express integration tests (#33) and benchmarks against the raw driver (#39);
-  release workflow publishing to npm with `next` / `latest` tags (#38).
+- `npm run ci:local`: typecheck, unit tests, build and every integration test against a local
+  HANA Express (#33), optionally with benchmarks against the raw driver (#39); release workflow
+  publishing to npm with `next` / `latest` tags (#38). HANA does not run in GitHub Actions.
 - `hana-orm studio`: a local web page to browse, filter and edit the data of every model, with
   foreign-key navigation and a `--read-only` mode (#37).
 

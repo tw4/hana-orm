@@ -4,7 +4,7 @@
 #   2. docker compose -f docker-compose.hana.yml up -d   (first start takes ~10 minutes)
 #   3. Put the connection into .env.test (ignored by git):
 #        HANA_HOST=localhost  HANA_PORT=39041  HANA_USER=SYSTEM  HANA_PASSWORD=...  HANA_DATABASE=HXE
-#   4. HANA_ORM_ENV_FILE=.env.test npm run test:integration
+#   4. npm run ci:local   (or HANA_ORM_ENV_FILE=.env.test npm run test:integration)
 #      (HANA_ORM_ALLOW_DDL=1 also runs the migration tests)
 #
 # Notes:
