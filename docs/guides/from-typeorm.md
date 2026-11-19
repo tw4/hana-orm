@@ -21,7 +21,7 @@ class User {
 }
 ```
 
-```
+```hana
 model User {
   id    Int     @id @default(autoincrement())
   email String  @unique @db.NVarChar(320)
@@ -46,7 +46,7 @@ writes the models for you.
 | `repo.delete({ id })` | `db.user.delete({ where: { id } })` |
 | `Like("%x%")`, `In([…])`, `MoreThan(n)` | `{ contains: "x" }`, `{ in: […] }`, `{ gt: n }` |
 | `dataSource.transaction(async (m) => …)` | `db.$transaction(async (tx) => …)` |
-| `createQueryBuilder()` | the object API, or `$queryRaw` for hand-written SQL |
+| `createQueryBuilder()` | the [query builder](../client/query-builder.html): `db.select().from(user).leftJoin(…)` |
 
 ## Migrations
 

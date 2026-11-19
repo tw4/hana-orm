@@ -6,9 +6,9 @@ result types follow your `select`/`include`, and a migrations CLI that produces 
 > Status: **release candidate** (`1.0.0-rc.1`, `npm install hana-orm@next`). The API is meant to
 > be stable for 1.0; breaking changes until then are listed in [CHANGELOG.md](CHANGELOG.md).
 
-**Documentation: <https://tw4.github.io/hana-orm/>** (getting started, schema and client
-reference, migrations, HANA type mapping, guides for moving from Prisma, TypeORM and the raw
-driver).
+**Documentation: <https://tw4.github.io/hana-orm/>**: getting started, the schema language, the
+client (queries, transactions, raw SQL, the query builder), migrations, the CLI and studio, HANA
+specifics, troubleshooting, and guides for moving from Prisma, TypeORM and the raw driver.
 
 - Pure TypeScript, no native query engine. The only native piece is SAP's own `@sap/hana-client`.
 - Familiar query API: `findMany`, `include`, nested writes, `$transaction`, `$extends`.
