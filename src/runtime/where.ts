@@ -229,7 +229,7 @@ function jsonCondition(engine: Engine, field: ColumnFieldDef, col: string, filte
   const name = field.name;
   const path = sqlLiteral(jsonPath(filter.path, name));
   const value = `JSON_VALUE(${col}, ${path})`;
-  const number = `JSON_VALUE(${col}, ${path} RETURNING DOUBLE)`;
+  const number = `JSON_VALUE(${col}, ${path} RETURNING DECIMAL)`;
   const query = `JSON_QUERY(${col}, ${path})`;
   const hasPath = filter.path !== undefined;
   const insensitive = filter.mode === "insensitive";

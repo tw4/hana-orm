@@ -8,6 +8,12 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 
 ## [Unreleased]
 
+### Fixed
+
+- Json filters that compare a number at a path (`{ path: "$.score", gte: 0.5 }`) failed on HANA:
+  `JSON_VALUE … RETURNING DOUBLE` is not supported there. They now use `RETURNING DECIMAL`, and a
+  non-numeric value at the path no longer fails the query.
+
 ## [1.0.0-rc.1] - 2026-11-19
 
 Release candidate for 1.0: every v0.2, v0.3 and v1.0 roadmap item, including the data browser

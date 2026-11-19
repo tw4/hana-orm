@@ -41,7 +41,7 @@ test("equals / not / comparisons with a path use JSON_VALUE; numbers compare as 
   assert.deepEqual(where(), { sql: `JSON_VALUE(t0."data", '$.address.city') = ?`, params: ["Berlin"] });
 
   await db.doc.findMany({ where: { data: { path: "$.age", gte: 18, lt: 65 } } });
-  assert.deepEqual(where(), { sql: `(JSON_VALUE(t0."data", '$.age' RETURNING DOUBLE) >= ?) AND (JSON_VALUE(t0."data", '$.age' RETURNING DOUBLE) < ?)`, params: [18, 65] });
+  assert.deepEqual(where(), { sql: `(JSON_VALUE(t0."data", '$.age' RETURNING DECIMAL) >= ?) AND (JSON_VALUE(t0."data", '$.age' RETURNING DECIMAL) < ?)`, params: [18, 65] });
 
   await db.doc.findMany({ where: { data: { path: ["active"], equals: true } } });
   assert.deepEqual(where(), { sql: `JSON_VALUE(t0."data", '$.active') = ?`, params: ["true"] });

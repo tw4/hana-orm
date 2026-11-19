@@ -330,7 +330,7 @@ db.$metrics();
 await db.event.findMany({
   where: {
     payload: { path: ["user", "country"], equals: "DE" },        // JSON_VALUE(...) = ?
-    meta: { path: "$.score", gte: 0.5 },                          // JSON_VALUE(... RETURNING DOUBLE)
+    meta: { path: "$.score", gte: 0.5 },                          // JSON_VALUE(... RETURNING DECIMAL)
     tags: { array_contains: ["urgent", 3] },                     // the array has both elements
   },
 });
