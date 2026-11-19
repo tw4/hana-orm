@@ -654,6 +654,25 @@ It is meant for development only: it refuses to run when the connection host is 
 `localhost`, `127.0.0.1` or `::1` unless `--allow-remote` is passed, and without `--force` it
 asks for confirmation (and refuses when it cannot ask, e.g. in a non-interactive shell).
 
+### Browsing data: `hana-orm studio`
+
+```sh
+npx hana-orm studio                # http://127.0.0.1:5555/?token=…
+npx hana-orm studio --read-only --port 6000
+```
+
+A local web page to browse and edit the database's data: every model and view of the schema,
+paged and sortable rows, filters (`=`, `≠`, `contains`, `>`, `is null`, …), foreign keys that
+open the referenced row, inline editing (double-click a cell, Enter saves, Esc cancels), adding
+and deleting rows. It runs through the client, so values are converted like in your code and
+database errors are shown as they are. Rows are addressed by their primary key (or a unique
+field); models without one, and views, are read-only. `--read-only` refuses every change.
+
+The server listens on `127.0.0.1` by default. Each run prints a URL with a random token. The page and
+every API call need that token, and requests under another host name are refused (no DNS
+rebinding). `--host 0.0.0.0` makes it reachable from other machines: anyone with the URL can
+then read and change the data.
+
 ### Formatting and multi-file schemas
 
 ```sh
@@ -663,9 +682,8 @@ npx hana-orm format --check   # CI: exit 1 and list files that are not formatted
 
 `format` aligns field names, types and attributes in columns, orders attributes
 (`@id @default @unique @updatedAt @ignore @relation @map @db.*`, then
-`@@id @@unique @@index @@fulltext @@map @@schema @@ignore`), normalizes spacing and blank lines and keeps
-
-`@@id @@unique @@index @@check @@map @@schema @@ignore`; `@@check` lines keep their order), normalizes spacing and blank lines and keeps
+`@@id @@unique @@index @@fulltext @@check @@map @@schema @@ignore`; `@@check` lines keep their order),
+normalizes spacing and blank lines and keeps
 all comments. It is idempotent and refuses to touch a file with syntax errors.
 
 A schema can also be a folder: `--schema schema/` (or a `./schema/` folder found by default)
