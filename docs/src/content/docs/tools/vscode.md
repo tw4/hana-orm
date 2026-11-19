@@ -1,5 +1,6 @@
 ---
 title: VS Code extension
+description: "Highlighting, diagnostics, formatting, go to definition and completion for .hana files."
 sidebar:
   order: 3
 ---

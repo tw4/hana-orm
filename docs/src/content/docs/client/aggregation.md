@@ -1,5 +1,6 @@
 ---
 title: Aggregation
+description: "Count rows, compute sums, averages, minimums and maximums, and group results with groupBy and having."
 sidebar:
   order: 5
 ---

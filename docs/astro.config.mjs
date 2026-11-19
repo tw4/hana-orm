@@ -19,8 +19,14 @@ export default defineConfig({
       description: "A type-safe TypeScript ORM for SAP HANA: a declarative schema, a generated client and reviewable SQL migrations.",
       logo: { src: "./src/assets/logo.svg" },
       favicon: "/favicon.svg",
-      customCss: ["./src/styles/theme.css", "./src/styles/landing.css"],
-      components: { Hero: "./src/components/Hero.astro" },
+      customCss: ["./src/styles/theme.css", "./src/styles/docs.css", "./src/styles/landing.css"],
+      components: {
+        Hero: "./src/components/Hero.astro",
+        PageTitle: "./src/components/PageTitle.astro",
+        Pagination: "./src/components/Pagination.astro",
+        ThemeProvider: "./src/components/ThemeProvider.astro",
+        ThemeSelect: "./src/components/ThemeSelect.astro",
+      },
       head: [
         { tag: "link", attrs: { rel: "preconnect", href: "https://fonts.googleapis.com" } },
         { tag: "link", attrs: { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" } },

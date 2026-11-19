@@ -1,5 +1,6 @@
 ---
 title: HANA specifics
+description: "How hana-orm handles identifiers, column tables, RETURNING, DDL, LOBs and time zones on HANA."
 sidebar:
   order: 2
 ---

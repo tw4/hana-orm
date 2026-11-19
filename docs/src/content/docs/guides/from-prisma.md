@@ -1,5 +1,6 @@
 ---
 title: Coming from Prisma
+description: "What carries over from Prisma's schema, client and migrations, and what differs on HANA."
 sidebar:
   order: 1
 ---

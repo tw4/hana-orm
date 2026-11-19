@@ -1,5 +1,6 @@
 ---
 title: Ignoring fields and models
+description: "Keep columns and tables known to migrations while hiding them from the client."
 sidebar:
   order: 6
 ---

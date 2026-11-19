@@ -1,5 +1,6 @@
 ---
 title: Nested writes
+description: "Create, connect, update and delete related rows in the same call, in one transaction."
 sidebar:
   order: 4
 ---

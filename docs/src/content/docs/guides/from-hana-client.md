@@ -1,5 +1,6 @@
 ---
 title: Coming from @sap/hana-client
+description: "Map raw @sap/hana-client code to hana-orm while keeping SAP's driver underneath."
 sidebar:
   order: 3
 ---

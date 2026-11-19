@@ -1,5 +1,6 @@
 ---
 title: Decimal, BigInt, Json and dates
+description: "How Decimal, BigInt, Json, dates and bytes are read and written without losing precision."
 sidebar:
   order: 9
 ---

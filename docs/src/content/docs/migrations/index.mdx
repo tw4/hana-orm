@@ -1,9 +1,15 @@
 ---
 title: Migrations
+description: "Plan migrations from schema changes and deploy them as plain, reviewable HANA SQL."
 sidebar:
   label: Overview
   order: 0
 ---
+
+import SectionGrid from "../../../components/SectionGrid.astro";
+
+<SectionGrid section="migrations" />
+
 
 Migrations change the database step by step, so that every environment reaches the same
 schema the same way. In hana-orm a migration is a folder with the literal HANA SQL that runs.
@@ -44,17 +50,6 @@ deployment run `migrate deploy` to catch up.
 - **A lock** keeps two deploys from running at the same time.
 - **Applied migrations are checksummed.** Editing a migration after it was deployed is reported
   by `migrate status` and stops `migrate deploy`.
-
-## Pages in this section
-
-- [Migration files](/hana-orm/migrations/files/): what is in a migration folder; renames; destructive changes
-- [Hand-written and data migrations](/hana-orm/migrations/custom/)
-- [Existing databases](/hana-orm/migrations/existing/): `db pull` and `migrate baseline`
-- [Drift and diffs](/hana-orm/migrations/drift/): `migrate status`, `db verify`, `migrate diff`
-- [Fixing the history](/hana-orm/migrations/history/): `resolve`, `unlock`, `squash`, `split`
-- [Development databases](/hana-orm/migrations/development/): `db push`, `migrate reset`, `db seed`,
-  `db execute`
-- [Deploying to production](/hana-orm/migrations/production/): CI/CD, locking, housekeeping tables
 
 ## Commands
 

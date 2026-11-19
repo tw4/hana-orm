@@ -1,5 +1,6 @@
 ---
 title: Errors
+description: "Error classes and stable codes: validation, not found, constraint violations, timeouts and transactions."
 sidebar:
   order: 13
 ---

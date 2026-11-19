@@ -1,5 +1,6 @@
 ---
 title: Schema in TypeScript
+description: "Write the schema in TypeScript and use it with or without the generator."
 sidebar:
   order: 8
 ---

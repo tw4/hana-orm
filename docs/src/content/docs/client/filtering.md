@@ -1,5 +1,6 @@
 ---
 title: Filtering
+description: "Filter with operators, AND / OR / NOT, relation filters, Json paths, full-text search and SQL fragments."
 sidebar:
   order: 2
 ---

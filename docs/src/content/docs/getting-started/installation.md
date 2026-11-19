@@ -1,5 +1,6 @@
 ---
 title: Installation
+description: "Requirements, the packages to install and how to run the generated TypeScript client."
 sidebar:
   order: 1
 ---

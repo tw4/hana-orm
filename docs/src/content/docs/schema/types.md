@@ -1,5 +1,6 @@
 ---
 title: Type mapping
+description: "Schema types, HANA column types and TypeScript types, and how type changes migrate."
 sidebar:
   order: 9
 ---

@@ -1,5 +1,6 @@
 ---
 title: Project layout
+description: "Which files hana-orm reads and writes, what to commit and how to share one client."
 sidebar:
   order: 5
 ---

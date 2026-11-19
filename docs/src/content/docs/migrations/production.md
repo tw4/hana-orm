@@ -1,5 +1,6 @@
 ---
 title: Deploying to production
+description: "Run migrate deploy in CI/CD, keep changes backward compatible and know the housekeeping tables."
 sidebar:
   order: 7
 ---

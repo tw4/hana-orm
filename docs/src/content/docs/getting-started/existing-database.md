@@ -1,5 +1,6 @@
 ---
 title: Starting from an existing database
+description: "Read existing tables into a schema with db pull, tidy it up and baseline the migrations."
 sidebar:
   order: 4
 ---

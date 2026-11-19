@@ -1,5 +1,6 @@
 ---
 title: Raw SQL
+description: "Run hand-written SQL safely with tagged templates, and get typed results from .sql files."
 sidebar:
   order: 7
 ---

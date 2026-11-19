@@ -1,5 +1,6 @@
 ---
 title: Package exports
+description: "What the generated client, hana-orm, hana-orm/runtime and hana-orm/migrate export."
 sidebar:
   order: 4
 ---
