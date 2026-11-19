@@ -1,6 +1,6 @@
 {
   "name": "hana-orm",
-  "version": "0.1.0-alpha.0",
+  "version": "1.0.0-rc.1",
   "description": "Type-safe TypeScript ORM for SAP HANA with a declarative schema, typed client and migrations CLI",
   "license": "Apache-2.0",
   "type": "module",

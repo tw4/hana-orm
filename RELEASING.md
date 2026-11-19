@@ -18,6 +18,10 @@ Releases are published by `.github/workflows/release.yml` when a version tag is 
    commits `package.json` and tags `v0.2.0-beta.1`.
 4. `git push --follow-tags`.
 
+When the version bump and changelog come in through a pull request (as for `1.0.0-rc.1`), skip
+step 3's commit and only tag the merge commit: `git tag v1.0.0-rc.1 <commit>` and
+`git push origin v1.0.0-rc.1`.
+
 The workflow checks that the tag equals `v<package.json version>` and that `CHANGELOG.md` has a
 section for it, runs typecheck, tests and the build, publishes with
 `npm publish --provenance --tag next|latest`, and creates the GitHub release with that

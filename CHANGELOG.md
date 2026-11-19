@@ -8,6 +8,12 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-11-19
+
+Release candidate for 1.0: every v0.2, v0.3 and v1.0 roadmap item, including the data browser
+(`hana-orm studio`, #37). Published under the `next` tag. The integration tests and benchmarks
+(`npm run ci:local -- --bench`) passed on this version against HANA Express 2.00.088.
+
 ### Added
 
 - Migrations: `migrate squash` and `migrate split` (#21); check constraints, sequences and `///`
@@ -23,6 +29,10 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
   publishing to npm with `next` / `latest` tags (#38). HANA does not run in GitHub Actions.
 - `hana-orm studio`: a local web page to browse, filter and edit the data of every model, with
   foreign-key navigation and a `--read-only` mode (#37).
+- Documentation site at <https://tw4.github.io/hana-orm/> with guides for moving from Prisma,
+  TypeORM and `@sap/hana-client` (#36).
+- VS Code extension for `.hana` files: highlighting, diagnostics, formatting, go to definition and
+  completion (`editors/vscode`, #35).
 
 ### Fixed
 
@@ -49,5 +59,6 @@ pagination, relation ordering, implicit many-to-many), migrations (`plan`, `depl
 `resolve`, `baseline`, `diff`, `reset`, locking with heartbeat, renames and schema moves),
 `db pull` / `push` / `seed` / `execute`, the formatter and multi-file schemas.
 
-[Unreleased]: https://github.com/tw4/hana-orm/commits/main
+[Unreleased]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.1...main
+[1.0.0-rc.1]: https://github.com/tw4/hana-orm/releases/tag/v1.0.0-rc.1
 [0.1.0-alpha.0]: https://github.com/tw4/hana-orm/commits/main

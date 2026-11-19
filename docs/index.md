@@ -9,8 +9,9 @@ A type-safe TypeScript ORM for **SAP HANA**: a declarative schema, a generated c
 result types follow your `select` / `include`, and a migrations CLI that produces reviewable SQL.
 
 {: .warning }
-hana-orm is **alpha** (`0.1.0-alpha`). APIs may still change between minor versions; breaking
-changes are listed in the [changelog](https://github.com/tw4/hana-orm/blob/main/CHANGELOG.md).
+hana-orm is a **release candidate** (`1.0.0-rc.1`, `npm install hana-orm@next`). The API is meant
+to be stable for 1.0; breaking changes until then are listed in the
+[changelog](https://github.com/tw4/hana-orm/blob/main/CHANGELOG.md).
 
 - **Pure TypeScript**, no native query engine. The only native piece is SAP's own `@sap/hana-client`.
 - **Familiar query API**: `findMany`, `include`, nested writes, `$transaction`, `$extends`.
