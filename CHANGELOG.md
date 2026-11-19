@@ -26,6 +26,9 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 ### Fixed
 
 - `migrate show <id>` never matched an id.
+- Introspection failed on a real HANA (`invalid column name: COLUMN_NAME`), which broke `db push`,
+  `db pull`, `migrate plan` and drift checks: `SYS.FULLTEXT_INDEXES` has no column name, so it is
+  now read from `SYS.INDEX_COLUMNS`.
 
 ### Upgrade notes
 
