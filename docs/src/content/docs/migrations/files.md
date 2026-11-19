@@ -1,5 +1,6 @@
 ---
 title: Migration files
+description: "What a migration folder contains, what planning detects, renames and destructive changes."
 sidebar:
   order: 1
 ---

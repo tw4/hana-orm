@@ -1,5 +1,6 @@
 ---
 title: Logging, events and metrics
+description: "Log statements, subscribe to query, warn and error events, and read client and pool metrics."
 sidebar:
   order: 11
 ---

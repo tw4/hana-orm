@@ -1,5 +1,6 @@
 ---
 title: Relations
+description: "One-to-one, one-to-many, many-to-many and self relations, with referential actions."
 sidebar:
   order: 3
 ---

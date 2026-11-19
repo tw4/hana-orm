@@ -1,5 +1,6 @@
 ---
 title: Several schemas
+description: "Models in several database schemas, shared databases and one schema per tenant."
 sidebar:
   order: 5
 ---

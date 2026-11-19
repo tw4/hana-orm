@@ -1,5 +1,6 @@
 ---
 title: Query builder
+description: "Write joins, aggregates, subqueries and WITH queries with typed tables, plus prepared queries and SQL fragments."
 sidebar:
   order: 8
 ---

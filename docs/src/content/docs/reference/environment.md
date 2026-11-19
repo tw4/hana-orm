@@ -1,5 +1,6 @@
 ---
 title: Environment variables
+description: "Every environment variable hana-orm reads, and how .env files are loaded."
 sidebar:
   order: 1
 ---

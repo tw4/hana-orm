@@ -1,5 +1,6 @@
 ---
 title: Reading data
+description: "findMany, findFirst and findUnique with select, include and omit, ordering, pagination and distinct."
 sidebar:
   order: 1
 ---

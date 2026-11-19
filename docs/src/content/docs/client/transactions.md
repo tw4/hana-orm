@@ -1,5 +1,6 @@
 ---
 title: Transactions
+description: "Interactive and batch transactions, timeouts, isolation levels and retries on SAP HANA."
 sidebar:
   order: 6
 ---

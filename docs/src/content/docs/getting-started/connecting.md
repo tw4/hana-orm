@@ -1,5 +1,6 @@
 ---
 title: Connecting to HANA
+description: "Configure the datasource and .env, tenant databases, connection URLs and SAP HANA Cloud."
 sidebar:
   order: 2
 ---

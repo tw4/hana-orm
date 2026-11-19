@@ -1,5 +1,6 @@
 ---
 title: How it works
+description: "How the schema, the contract, the generated client and migrations fit together."
 sidebar:
   order: 3
 ---

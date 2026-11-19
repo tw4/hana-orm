@@ -1,5 +1,6 @@
 ---
 title: Development databases
+description: "db push for prototypes, migrate reset, seeding and running SQL scripts on development databases."
 sidebar:
   order: 6
 ---

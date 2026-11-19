@@ -1,5 +1,6 @@
 ---
 title: Fixing the history
+description: "Unblock a deploy, resolve failed migrations, release locks, and squash or split migrations."
 sidebar:
   order: 5
 ---

@@ -1,0 +1,26 @@
+---
+// Previous / next links as cards.
+import { Icon } from "@astrojs/starlight/components";
+
+const { pagination } = Astro.locals.starlightRoute;
+const { prev, next } = pagination;
+---
+
+{
+  (prev || next) && (
+    <nav class="ho-pager" aria-label="Pagination">
+      {prev ? (
+        <a class="ho-pager__card" href={prev.href} rel="prev" data-spotlight>
+          <span class="ho-pager__dir"><Icon name="left-arrow" size="1rem" /> Previous</span>
+          <span class="ho-pager__title">{prev.label}</span>
+        </a>
+      ) : <span />}
+      {next && (
+        <a class="ho-pager__card ho-pager__card--next" href={next.href} rel="next" data-spotlight>
+          <span class="ho-pager__dir">Next <Icon name="right-arrow" size="1rem" /></span>
+          <span class="ho-pager__title">{next.label}</span>
+        </a>
+      )}
+    </nav>
+  )
+}

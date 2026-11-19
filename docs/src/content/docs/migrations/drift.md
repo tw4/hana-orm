@@ -1,5 +1,6 @@
 ---
 title: Drift and diffs
+description: "Find differences between the database, the migrations and the schema with status, verify and diff."
 sidebar:
   order: 4
 ---

@@ -1,9 +1,15 @@
 ---
 title: Client
+description: "Create the generated client, set its options, manage its lifecycle and find every operation it offers."
 sidebar:
   label: Overview
   order: 0
 ---
+
+import SectionGrid from "../../../components/SectionGrid.astro";
+
+<SectionGrid section="client" />
+
 
 `hana-orm generate` writes a client class for your schema. Create one instance per process and
 share it; it holds the connection pool.
@@ -101,19 +107,3 @@ An operation that is never awaited never runs.
 | `$on(event, listener)`, `$metrics()` | [Logging, events and metrics](/hana-orm/client/logging/) |
 | `$connect()`, `$disconnect()` | above |
 
-## Pages in this section
-
-- [Reading data](/hana-orm/client/reading/): `find*`, `select` / `include` / `omit`, ordering, pagination,
-  `distinct`
-- [Filtering](/hana-orm/client/filtering/): operators, relation filters, Json filters, full-text search
-- [Writing data](/hana-orm/client/writing/): `create`, `update`, `upsert`, `delete`, bulk operations
-- [Nested writes](/hana-orm/client/nested-writes/)
-- [Aggregation](/hana-orm/client/aggregation/): `count`, `aggregate`, `groupBy`
-- [Transactions](/hana-orm/client/transactions/)
-- [Raw SQL](/hana-orm/client/raw-sql/), including typed SQL from `.sql` files
-- [Query builder](/hana-orm/client/query-builder/), prepared queries and `sql` fragments
-- [Decimal, BigInt, Json and dates](/hana-orm/client/values/)
-- [Extensions](/hana-orm/client/extensions/): custom methods, query hooks, computed fields
-- [Logging, events and metrics](/hana-orm/client/logging/)
-- [Performance](/hana-orm/client/performance/): pool, plan cache, statement cache, batches
-- [Errors](/hana-orm/client/errors/)

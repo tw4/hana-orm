@@ -1,0 +1,28 @@
+---
+// Page header for docs pages: the section as an eyebrow, the title and the page description.
+// Starlight links "on this page" and the skip link to this id.
+const PAGE_TITLE_ID = "_top";
+import Effects from "./Effects.astro";
+
+const { entry } = Astro.locals.starlightRoute;
+const sections: Record<string, string> = {
+  "getting-started": "Getting started",
+  concepts: "Start here",
+  schema: "Schema",
+  client: "Client",
+  migrations: "Migrations",
+  tools: "Tools",
+  guides: "Guides",
+  reference: "Reference",
+};
+const section = sections[entry.id.split("/")[0] ?? ""];
+const description = entry.data.description;
+---
+
+<header class="ho-page-head">
+  {section && <p class="ho-page-head__eyebrow">{section}</p>}
+  <h1 id={PAGE_TITLE_ID}>{entry.data.title}</h1>
+  {description && <p class="ho-page-head__lead">{description}</p>}
+</header>
+
+<Effects />

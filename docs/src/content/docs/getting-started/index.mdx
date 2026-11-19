@@ -1,0 +1,30 @@
+---
+title: Getting started
+description: "From an empty folder to a typed query against SAP HANA in a few steps."
+sidebar:
+  label: Overview
+  order: 0
+---
+
+import SectionGrid from "../../../components/SectionGrid.astro";
+
+<SectionGrid section="getting-started" />
+
+The short version:
+
+```sh
+npm install hana-orm @sap/hana-client
+npx hana-orm init                       # schema.hana and .env.example
+cp .env.example .env                    # fill in the connection
+npx hana-orm migrate plan --name init   # or: npx hana-orm db pull (existing database)
+npx hana-orm migrate deploy
+npx hana-orm generate
+```
+
+```ts
+import { HanaClient } from "./src/generated/hana/index.ts";
+
+const db = new HanaClient();
+console.log(await db.user.findMany({ take: 10 }));
+await db.$disconnect();
+```

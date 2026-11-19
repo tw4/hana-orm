@@ -1,0 +1,28 @@
+---
+// Cards for every page of a docs section, in sidebar order, with their descriptions.
+import { getCollection } from "astro:content";
+import { Icon } from "@astrojs/starlight/components";
+
+interface Props {
+  /** Folder of the section, e.g. "client". */
+  section: string;
+}
+const { section } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const pages = (await getCollection("docs", (e) => e.id.startsWith(`${section}/`) && e.id !== `${section}/index`)).sort(
+  (a, b) => (a.data.sidebar.order ?? 999) - (b.data.sidebar.order ?? 999) || a.data.title.localeCompare(b.data.title),
+);
+---
+
+<div class="ho-grid not-content">
+  {
+    pages.map((p, i) => (
+      <a class="ho-grid__card" href={`${base}/${p.id}/`} data-spotlight style={`--i:${i}`}>
+        <span class="ho-grid__num">{String(i + 1).padStart(2, "0")}</span>
+        <span class="ho-grid__title">{p.data.title}</span>
+        {p.data.description && <span class="ho-grid__desc">{p.data.description}</span>}
+        <span class="ho-grid__arrow" aria-hidden="true"><Icon name="right-arrow" size="1rem" /></span>
+      </a>
+    ))
+  }
+</div>

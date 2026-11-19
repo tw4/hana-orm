@@ -1,5 +1,6 @@
 ---
 title: Several files and formatting
+description: "Split a schema into several files, and format and validate it."
 sidebar:
   order: 7
 ---

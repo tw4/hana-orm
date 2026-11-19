@@ -1,5 +1,6 @@
 ---
 title: Existing databases
+description: "Start migrating a database whose tables already exist with db pull and migrate baseline."
 sidebar:
   order: 3
 ---

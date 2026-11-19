@@ -1,5 +1,6 @@
 ---
 title: Performance
+description: "Size the connection pool, set timeouts, use the plan and statement caches, batch work and avoid N+1."
 sidebar:
   order: 12
 ---

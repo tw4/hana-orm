@@ -1,5 +1,6 @@
 ---
 title: Testing with HANA Express
+description: "Run HANA Express in Docker, isolate tests with schemas and transactions, and test without a database."
 sidebar:
   order: 4
 ---

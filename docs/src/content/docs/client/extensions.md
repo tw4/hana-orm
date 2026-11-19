@@ -1,5 +1,6 @@
 ---
 title: Extensions
+description: "Add model and client methods, wrap operations with query hooks, and define computed fields with $extends."
 sidebar:
   order: 10
 ---

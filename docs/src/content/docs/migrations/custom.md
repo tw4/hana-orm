@@ -1,5 +1,6 @@
 ---
 title: Hand-written and data migrations
+description: "Hand-written SQL migrations and TypeScript data migrations that run in the migration's transaction."
 sidebar:
   order: 2
 ---

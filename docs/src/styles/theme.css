@@ -54,10 +54,8 @@
   letter-spacing: -0.015em;
 }
 
-/* Tables: readable and full width */
+/* Tables: readable */
 .sl-markdown-content table {
-  display: table;
-  width: 100%;
   font-size: var(--sl-text-sm);
 }
 .sl-markdown-content :is(th, td) {

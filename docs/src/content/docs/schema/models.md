@@ -1,5 +1,6 @@
 ---
 title: Models and fields
+description: "Fields, scalar types, attributes, defaults, names and composite keys."
 sidebar:
   order: 2
 ---

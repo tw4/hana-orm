@@ -1,5 +1,6 @@
 ---
 title: Studio
+description: "A local web page to browse, filter and edit the data behind your schema."
 sidebar:
   order: 2
 ---

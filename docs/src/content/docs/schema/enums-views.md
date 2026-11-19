@@ -1,5 +1,6 @@
 ---
 title: Enums and views
+description: "Enums stored as strings, and read-only models over existing database views."
 sidebar:
   order: 4
 ---

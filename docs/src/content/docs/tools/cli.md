@@ -1,5 +1,6 @@
 ---
 title: CLI reference
+description: "Every hana-orm command and option, exit codes and environment variables."
 sidebar:
   order: 1
 ---

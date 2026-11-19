@@ -1,5 +1,6 @@
 ---
 title: Writing data
+description: "create, update, upsert and delete, atomic number updates and fast bulk inserts."
 sidebar:
   order: 3
 ---

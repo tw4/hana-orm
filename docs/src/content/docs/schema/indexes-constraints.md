@@ -1,5 +1,6 @@
 ---
 title: Indexes and constraints
+description: "Primary keys, unique constraints, indexes, full-text indexes, checks, sequences and comments."
 sidebar:
   order: 5
 ---

@@ -1,9 +1,15 @@
 ---
 title: Schema
+description: "The .hana schema language: datasource, generator, models, enums and views."
 sidebar:
   label: Overview
   order: 0
 ---
+
+import SectionGrid from "../../../components/SectionGrid.astro";
+
+<SectionGrid section="schema" />
+
 
 The schema describes your database connection, where the client is generated and your data
 model. It is written in `.hana` files (a language close to Prisma's schema language) or in
@@ -54,20 +60,6 @@ model Customer {
   table or column comment in the database.
 - Strings use double quotes; lists use brackets: `@@index([a, b])`.
 - Values in `datasource` and `generator` are literals or `env("NAME")`.
-
-## Pages in this section
-
-- [Datasource and generator](/hana-orm/schema/datasource-generator/)
-- [Models and fields](/hana-orm/schema/models/): scalar types, field attributes, defaults, names
-- [Relations](/hana-orm/schema/relations/): one-to-one, one-to-many, many-to-many, self relations,
-  referential actions
-- [Enums and views](/hana-orm/schema/enums-views/)
-- [Indexes and constraints](/hana-orm/schema/indexes-constraints/): primary keys, unique, indexes,
-  full-text indexes, check constraints, sequences, comments
-- [Ignoring fields and models](/hana-orm/schema/ignoring/)
-- [Several files and formatting](/hana-orm/schema/multi-file/)
-- [Schema in TypeScript](/hana-orm/schema/typescript/)
-- [Type mapping](/hana-orm/schema/types/): schema types, HANA columns and TypeScript types
 
 ## Checking the schema
 

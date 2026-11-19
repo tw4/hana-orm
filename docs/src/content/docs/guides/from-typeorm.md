@@ -1,5 +1,6 @@
 ---
 title: Coming from TypeORM
+description: "Turn TypeORM entities and repositories into a hana-orm schema and client."
 sidebar:
   order: 2
 ---

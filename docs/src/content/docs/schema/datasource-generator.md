@@ -1,5 +1,6 @@
 ---
 title: Datasource and generator
+description: "Configure the HANA connection, the default schema and how the client is generated."
 sidebar:
   order: 1
 ---

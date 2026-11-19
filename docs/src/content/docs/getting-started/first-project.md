@@ -1,5 +1,6 @@
 ---
 title: Your first project
+description: "Write a schema, create the tables, generate the client and run your first typed queries."
 sidebar:
   order: 3
 ---

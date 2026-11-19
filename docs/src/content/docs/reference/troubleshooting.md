@@ -1,5 +1,6 @@
 ---
 title: Troubleshooting
+description: "Common connection, generation, migration and query errors, and how to fix them."
 sidebar:
   order: 3
 ---
