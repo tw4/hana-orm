@@ -1,11 +1,13 @@
 name: Release
 
-# Publishes to npm when a version tag (v1.2.3 or v1.2.3-beta.1) is pushed.
+# Stages a release on npm when a version tag (v1.2.3 or v1.2.3-beta.1) is pushed.
 # Pre-releases go to the `next` dist-tag, stable versions to `latest`, both with provenance.
 # The GitHub release gets the matching CHANGELOG.md section as its notes.
 #
-# Publishing needs either an npm token in the NPM_TOKEN secret, or npm "trusted publishing"
-# configured for this repository and workflow on npmjs.com (then no token is needed).
+# The workflow uses `npm stage publish`: the version is uploaded but not public until a
+# maintainer approves it with 2FA (`npm stage approve <id>` or on npmjs.com). No token that can
+# bypass 2FA is needed. Authentication is an npm token in the NPM_TOKEN secret (a granular
+# token without bypass is enough), or npm "trusted publishing" for this repository and workflow.
 
 on:
   push:
@@ -37,13 +39,22 @@ jobs:
           node scripts/release-notes.ts notes > release-notes.md
           echo "DIST_TAG=$(node scripts/release-notes.ts dist-tag)" >> "$GITHUB_ENV"
 
+      # `npm stage` needs npm 11.19 or newer
+      - run: npm install -g npm@11.19.1
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
 
-      - name: Publish to npm (${{ env.DIST_TAG }})
-        run: npm publish --provenance --access public --tag "$DIST_TAG" --ignore-scripts
+      - name: Stage on npm (${{ env.DIST_TAG }})
+        run: |
+          npm stage publish --provenance --access public --tag "$DIST_TAG" --ignore-scripts
+          {
+            echo "### Staged on npm"
+            echo
+            echo "\`$(npm pkg get name | tr -d '"')@${GITHUB_REF_NAME#v}\` is staged with the \`$DIST_TAG\` tag."
+            echo "Approve it with 2FA to publish: \`npm stage list\`, then \`npm stage approve <id>\` (or on npmjs.com)."
+          } >> "$GITHUB_STEP_SUMMARY"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
