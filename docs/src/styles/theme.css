@@ -1,0 +1,118 @@
+/* hana-orm docs theme: teal accent, calm grays, roomy layout. */
+:root {
+  --sl-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sl-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sl-content-width: 48rem;
+  --sl-text-h1: 2.4rem;
+  --sl-line-height: 1.7;
+}
+
+/* Dark mode (Starlight's default) */
+:root {
+  --sl-color-accent-low: #0b3330;
+  --sl-color-accent: #14b8a6;
+  --sl-color-accent-high: #99f6e4;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e7ecec;
+  --sl-color-gray-2: #c4cdcd;
+  --sl-color-gray-3: #8d9a9a;
+  --sl-color-gray-4: #5a6767;
+  --sl-color-gray-5: #3a4545;
+  --sl-color-gray-6: #1f2828;
+  --sl-color-black: #121818;
+}
+
+/* Light mode */
+:root[data-theme="light"] {
+  --sl-color-accent-low: #ccfbf1;
+  --sl-color-accent: #0f766e;
+  --sl-color-accent-high: #134e4a;
+  --sl-color-white: #121818;
+  --sl-color-gray-1: #1f2828;
+  --sl-color-gray-2: #3a4545;
+  --sl-color-gray-3: #5a6767;
+  --sl-color-gray-4: #8d9a9a;
+  --sl-color-gray-5: #c4cdcd;
+  --sl-color-gray-6: #eef2f2;
+  --sl-color-gray-7: #f7f9f9;
+  --sl-color-black: #ffffff;
+}
+
+/* Header: a hairline instead of a heavy bar */
+.header {
+  border-bottom: 1px solid var(--sl-color-hairline);
+  backdrop-filter: saturate(160%) blur(8px);
+}
+
+.site-title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Headings: tighter tracking */
+.sl-markdown-content :is(h1, h2, h3) {
+  letter-spacing: -0.015em;
+}
+
+/* Tables: readable and full width */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  font-size: var(--sl-text-sm);
+}
+.sl-markdown-content :is(th, td) {
+  vertical-align: top;
+}
+
+/* Inline code: subtle tint, tight padding so `Post`s stays one word */
+.sl-markdown-content :not(pre) > code {
+  border-radius: 0.3rem;
+  padding: 0.08em 0.25em;
+  background: var(--sl-color-gray-6);
+}
+
+/* Code frames: soft corners */
+.expressive-code .frame {
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+/* Home page hero */
+.hero h1 {
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  letter-spacing: -0.03em;
+}
+.hero .tagline {
+  max-width: 40rem;
+}
+.hero img {
+  width: min(11rem, 40vw);
+  filter: drop-shadow(0 18px 40px rgb(15 118 110 / 0.25));
+}
+
+/* Notes use the brand color */
+.starlight-aside--note {
+  --sl-color-asides-text-accent: var(--sl-color-accent-high);
+  --sl-color-asides-border: var(--sl-color-accent);
+  background-color: var(--sl-color-accent-low);
+}
+
+/* Cards: lift on hover */
+.card {
+  border-radius: 0.8rem;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+a.card:hover,
+.sl-link-card:hover {
+  transform: translateY(-1px);
+}
+.sl-link-card {
+  border-radius: 0.8rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .sl-link-card {
+    transition: none;
+  }
+}
