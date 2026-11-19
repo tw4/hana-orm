@@ -1,7 +1,7 @@
 /* hana-orm docs theme: teal accent, calm grays, roomy layout. */
 :root {
-  --sl-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --sl-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sl-font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sl-font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sl-content-width: 48rem;
   --sl-text-h1: 2.4rem;
   --sl-line-height: 1.7;

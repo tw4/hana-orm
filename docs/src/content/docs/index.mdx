@@ -2,39 +2,58 @@
 title: Type-safe TypeScript ORM for SAP HANA
 description: A type-safe TypeScript ORM for SAP HANA. A declarative schema, a generated client whose types follow your queries, and migrations you can read.
 template: splash
+tableOfContents: false
+editUrl: false
+lastUpdated: false
 hero:
-  title: hana-orm
-  tagline: A type-safe TypeScript ORM for SAP HANA. Describe your data once, get a client whose types follow every query, and ship migrations as plain, reviewable SQL.
-  image:
-    file: ../../assets/logo.svg
+  title: The type-safe ORM. Made for SAP HANA.
+  tagline: Describe your data once. Get a client whose types follow every query, and ship migrations as plain SQL you can review.
   actions:
     - text: Get started
       link: /hana-orm/getting-started/
       icon: right-arrow
-    - text: View on GitHub
+    - text: GitHub
       link: https://github.com/tw4/hana-orm
-      icon: external
       variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
+import { Icon } from "@astrojs/starlight/components";
+import Window from "../../components/Window.astro";
+import Terminal from "../../components/Terminal.astro";
+import Effects from "../../components/Effects.astro";
 
-:::note[Release candidate]
-`1.0.0-rc.1` is available as `npm install hana-orm@next`. The API is meant to be stable for 1.0;
-breaking changes until then are listed in the
-[changelog](https://github.com/tw4/hana-orm/blob/main/CHANGELOG.md).
-:::
+<Effects />
 
-## At a glance
+<div class="ho-section ho-reveal">
+  <p class="ho-eyebrow">What's inside</p>
+  <h2 class="ho-heading">One schema.<br />Everything else follows.</h2>
+</div>
 
-<Tabs>
-  <TabItem label="schema.hana">
+<div class="ho-stack">
+
+<Window
+  address="schema.hana"
+  status="Prisma-like"
+  name="Schema"
+  kicker="Models · Relations · HANA types"
+  tone="teal"
+  tags={["Relations", "Enums & views", "@db.* native types", "Full-text indexes", "Check constraints"]}
+  command="npx hana-orm init"
+  primary={{ text: "Schema docs", href: "/hana-orm/schema/" }}
+  secondary={{ text: "Type mapping", href: "/hana-orm/schema/types/" }}
+  tab="schema.hana"
+>
+  <Fragment slot="text">
+    Models, relations, enums and views in one readable file, with the HANA column types you
+    choose. Or pull it from the tables you already have with `db pull`.
+  </Fragment>
+  <Fragment slot="preview">
 
 ```hana
 model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique @db.NVarChar(320)
-  name      String?
+  role      Role     @default(READER)
   createdAt DateTime @default(now())
   posts     Post[]
 }
@@ -42,76 +61,152 @@ model User {
 model Post {
   id       Int    @id @default(autoincrement())
   title    String
-  authorId Int?
-  author   User?  @relation(fields: [authorId], references: [id])
+  authorId Int
+  author   User   @relation(fields: [authorId], references: [id])
+
+  @@index([authorId])
 }
 ```
 
-  </TabItem>
-  <TabItem label="Query">
+  </Fragment>
+</Window>
+
+<Window
+  address="src/main.ts"
+  status="Typed"
+  name="Client"
+  kicker="Queries · Transactions · Builder"
+  tone="violet"
+  tags={["Types follow select", "Nested writes", "$transaction", "SQL-like builder", "Typed raw SQL"]}
+  command="npx hana-orm generate"
+  primary={{ text: "Client docs", href: "/hana-orm/client/" }}
+  secondary={{ text: "Query builder", href: "/hana-orm/client/query-builder/" }}
+  tab="main.ts"
+>
+  <Fragment slot="text">
+    A generated client whose result types follow `select`, `include` and `omit`. Relations
+    load in batches, `BIGINT` stays exact and `DECIMAL` loses no digit.
+  </Fragment>
+  <Fragment slot="preview">
 
 ```ts
-import { HanaClient } from "./generated/hana/index.ts";
-
-const db = new HanaClient();
-
 const users = await db.user.findMany({
-  where: { email: { endsWith: "@example.com" } },
-  select: { id: true, email: true, posts: { select: { title: true }, take: 3 } },
+  where: { role: "AUTHOR" },
+  select: {
+    email: true,
+    posts: { select: { title: true }, take: 3 },
+  },
   orderBy: { createdAt: "desc" },
 });
-// users: { id: number; email: string; posts: { title: string }[] }[]
 ```
 
-  </TabItem>
-  <TabItem label="Migrate">
+    <div class="ho-typehint" aria-label="Inferred result type">
+      <span class="ho-typehint__label">users</span>
+      <code>{"{ email: string; posts: { title: string }[] }[]"}</code>
+    </div>
+  </Fragment>
+</Window>
 
-```sh
-npx hana-orm migrate plan --name init   # writes migrations/<timestamp>_init/migration.sql
-npx hana-orm migrate deploy             # applies it in one transaction
-```
+<Window
+  address="migrations/"
+  status="No shadow DB"
+  name="Migrations"
+  kicker="Plan · Review · Deploy"
+  tone="amber"
+  tags={["Literal SQL", "One transaction each", "Rename detection", "Drift checks", "Deploy lock"]}
+  command="npx hana-orm migrate plan --name init"
+  primary={{ text: "Migration docs", href: "/hana-orm/migrations/" }}
+  secondary={{ text: "Production", href: "/hana-orm/migrations/production/" }}
+  tab="terminal"
+>
+  <Fragment slot="text">
+    Every migration is a folder with the SQL that runs. Planning needs no database; deploying
+    runs each migration in one transaction with transactional DDL, behind a lock.
+  </Fragment>
+  <Fragment slot="preview">
+    <Terminal
+      lines={[
+        { kind: "cmd", text: "hana-orm migrate plan --name add_views" },
+        { kind: "out", text: "Created migration 20261120_add_views with 2 operation(s):" },
+        { kind: "dim", text: '  - Add column "views" to "Post"' },
+        { kind: "dim", text: '  - Create index "IX_Post_views" on "Post"' },
+        { kind: "cmd", text: "hana-orm migrate deploy" },
+        { kind: "out", text: "Applying 20261120_add_views (2 operation(s))" },
+        { kind: "ok", text: "Applied 1 migration(s)." },
+      ]}
+    />
+  </Fragment>
+</Window>
 
-  </TabItem>
-</Tabs>
+<Window
+  address="127.0.0.1:5555"
+  status="Local"
+  name="Studio"
+  kicker="Browse · Filter · Edit"
+  tone="sky"
+  tags={["Every model and view", "Filters", "Foreign-key links", "Inline editing", "Read-only mode"]}
+  command="npx hana-orm studio"
+  primary={{ text: "Studio docs", href: "/hana-orm/tools/studio/" }}
+  secondary={{ text: "CLI reference", href: "/hana-orm/tools/cli/" }}
+  tab="User"
+>
+  <Fragment slot="text">
+    A local web page for the data behind your schema. Sort, filter, follow foreign keys and
+    edit cells, through the same runtime as your application.
+  </Fragment>
+  <Fragment slot="preview">
+    <div class="ho-studio">
+      <div class="ho-studio__filter"><span>role</span><span>=</span><span>AUTHOR</span></div>
+      <table>
+        <thead><tr><th>id</th><th>email</th><th>role</th><th>balance</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>{"ada@example.com"}</td><td>AUTHOR</td><td>12.50</td></tr>
+          <tr class="is-editing"><td>2</td><td>{"grace@example.com"}</td><td><span class="ho-studio__edit">ADMIN<i></i></span></td><td>99999999.99</td></tr>
+          <tr><td>3</td><td>{"linus@example.com"}</td><td>AUTHOR</td><td>0.00</td></tr>
+        </tbody>
+      </table>
+      <p class="ho-studio__foot"><i></i>3 rows · sorted by id</p>
+    </div>
+  </Fragment>
+</Window>
 
-## Why hana-orm
+</div>
 
-<CardGrid>
-  <Card title="Pure TypeScript" icon="seti:typescript">
-    No query engine binary. Queries are compiled to SQL in your process and run through SAP's own
-    `@sap/hana-client`.
-  </Card>
-  <Card title="Types follow the query" icon="approve-check">
-    `select`, `include` and `omit` shape the result type, down to nested relations and computed
-    fields.
-  </Card>
-  <Card title="Made for HANA" icon="puzzle">
-    Identity columns, `@db.*` native types, several schemas, tenant databases, full-text indexes,
-    sequences, HANA Cloud over TLS. `BIGINT` stays exact, `DECIMAL` loses no digit.
-  </Card>
-  <Card title="Migrations you can read" icon="document">
-    Each migration is a folder with the literal SQL that runs. Planning needs no database;
-    deploying runs each migration in one transaction, behind a lock.
-  </Card>
-  <Card title="Two query styles" icon="list-format">
-    An object API with nested writes and transactions, and a SQL-like builder with joins,
-    subqueries and `WITH`, sharing one client.
-  </Card>
-  <Card title="Tools around it" icon="laptop">
-    `db pull` for existing databases, a local data browser, a formatter, typed SQL from `.sql`
-    files and a VS Code extension.
-  </Card>
-</CardGrid>
+<div class="ho-section ho-reveal">
+  <p class="ho-eyebrow">Built for HANA</p>
+  <h2 class="ho-heading">Not a port. Made for this database.</h2>
+</div>
 
-## Explore the docs
+<div class="ho-features">
+  <div class="ho-feature ho-reveal" data-spotlight style="--i:0">
+    <span class="ho-feature__icon" aria-hidden="true"><Icon name="seti:typescript" /></span>
+    <h3>Pure TypeScript</h3>
+    <p>No engine binary. SQL is compiled in your process and runs through SAP's `@sap/hana-client`.</p>
+  </div>
+  <div class="ho-feature ho-reveal" data-spotlight style="--i:1">
+    <span class="ho-feature__icon" aria-hidden="true"><Icon name="seti:db" /></span>
+    <h3>Exact numbers</h3>
+    <p>`BIGINT` as `bigint`, `DECIMAL` as a lossless string or `decimal.js`, timestamps in UTC.</p>
+  </div>
+  <div class="ho-feature ho-reveal" data-spotlight style="--i:2">
+    <span class="ho-feature__icon" aria-hidden="true"><Icon name="random" /></span>
+    <h3>Several schemas</h3>
+    <p>`@@schema`, tenant databases and HANA Cloud over TLS, from one client.</p>
+  </div>
+  <div class="ho-feature ho-reveal" data-spotlight style="--i:3">
+    <span class="ho-feature__icon" aria-hidden="true"><Icon name="approve-check" /></span>
+    <h3>Tested on HANA</h3>
+    <p>Every release runs its integration suite against HANA Express before it ships.</p>
+  </div>
+</div>
 
-<CardGrid>
-  <LinkCard title="Getting started" description="Install, connect, write a schema and run your first query." href="/hana-orm/getting-started/" />
-  <LinkCard title="How it works" description="Schema, contract, client and migrations, and how they fit together." href="/hana-orm/concepts/" />
-  <LinkCard title="Schema" description="Models, relations, enums, views, indexes and HANA type mapping." href="/hana-orm/schema/" />
-  <LinkCard title="Client" description="Reading, filtering, writing, transactions, raw SQL and the query builder." href="/hana-orm/client/" />
-  <LinkCard title="Migrations" description="Plan, deploy, drift, existing databases and production deploys." href="/hana-orm/migrations/" />
-  <LinkCard title="Tools" description="The CLI reference, studio and the VS Code extension." href="/hana-orm/tools/" />
-  <LinkCard title="Guides" description="Moving from Prisma, TypeORM or the raw driver; testing; several schemas." href="/hana-orm/guides/" />
-  <LinkCard title="Reference" description="Environment variables, HANA specifics, troubleshooting, package exports." href="/hana-orm/reference/" />
-</CardGrid>
+<div class="ho-cta ho-reveal" data-spotlight>
+  <div>
+    <h2 class="ho-cta__title">Start with your first schema.</h2>
+    <p class="ho-cta__text">Install, connect and run a typed query in a few minutes.</p>
+  </div>
+  <div class="ho-cta__actions">
+    <a class="ho-btn ho-btn--solid" href="/hana-orm/getting-started/">Get started</a>
+    <a class="ho-btn ho-btn--ghost" href="/hana-orm/guides/from-prisma/">Coming from Prisma?</a>
+  </div>
+</div>

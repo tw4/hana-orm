@@ -1,0 +1,33 @@
+---
+// A terminal that types its lines when it scrolls into view, then keeps a blinking cursor.
+interface Line {
+  /** "cmd" lines are typed after a prompt; the others appear one after another. */
+  kind: "cmd" | "out" | "ok" | "dim";
+  text: string;
+}
+interface Props {
+  lines: Line[];
+}
+const { lines } = Astro.props;
+let delay = 200;
+const timed = lines.map((l) => {
+  const start = delay;
+  delay += l.kind === "cmd" ? 300 + l.text.length * 28 : 140;
+  return { ...l, start, chars: l.text.length };
+});
+---
+
+<div class="ho-term" role="img" aria-label={lines.map((l) => (l.kind === "cmd" ? `$ ${l.text}` : l.text)).join("\n")}>
+  {
+    timed.map((l) => (
+      <div class:list={["ho-term__line", `ho-term__line--${l.kind}`]} style={`--start:${l.start}ms;--chars:${l.chars}`} aria-hidden="true">
+        {l.kind === "cmd" && <span class="ho-term__prompt">$</span>}
+        <span class="ho-term__text">{l.text}</span>
+      </div>
+    ))
+  }
+  <div class="ho-term__line ho-term__line--cursor" style={`--start:${delay}ms`} aria-hidden="true">
+    <span class="ho-term__prompt">$</span>
+    <span class="ho-cursor"></span>
+  </div>
+</div>
