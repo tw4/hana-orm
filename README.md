@@ -655,6 +655,25 @@ It is meant for development only: it refuses to run when the connection host is 
 `localhost`, `127.0.0.1` or `::1` unless `--allow-remote` is passed, and without `--force` it
 asks for confirmation (and refuses when it cannot ask, e.g. in a non-interactive shell).
 
+### Browsing data: `hana-orm studio`
+
+```sh
+npx hana-orm studio                # http://127.0.0.1:5555/?token=…
+npx hana-orm studio --read-only --port 6000
+```
+
+A local web page to browse and edit the database's data: every model and view of the schema,
+paged and sortable rows, filters (`=`, `≠`, `contains`, `>`, `is null`, …), foreign keys that
+open the referenced row, inline editing (double-click a cell, Enter saves, Esc cancels), adding
+and deleting rows. It runs through the client, so values are converted like in your code and
+database errors are shown as they are. Rows are addressed by their primary key (or a unique
+field); models without one, and views, are read-only. `--read-only` refuses every change.
+
+The server listens on `127.0.0.1` by default. Each run prints a URL with a random token. The page and
+every API call need that token, and requests under another host name are refused (no DNS
+rebinding). `--host 0.0.0.0` makes it reachable from other machines: anyone with the URL can
+then read and change the data.
+
 ### Formatting and multi-file schemas
 
 ```sh
@@ -664,9 +683,8 @@ npx hana-orm format --check   # CI: exit 1 and list files that are not formatted
 
 `format` aligns field names, types and attributes in columns, orders attributes
 (`@id @default @unique @updatedAt @ignore @relation @map @db.*`, then
-`@@id @@unique @@index @@fulltext @@map @@schema @@ignore`), normalizes spacing and blank lines and keeps
-
-`@@id @@unique @@index @@check @@map @@schema @@ignore`; `@@check` lines keep their order), normalizes spacing and blank lines and keeps
+`@@id @@unique @@index @@fulltext @@check @@map @@schema @@ignore`; `@@check` lines keep their order),
+normalizes spacing and blank lines and keeps
 all comments. It is idempotent and refuses to touch a file with syntax errors.
 
 A schema can also be a folder: `--schema schema/` (or a `./schema/` folder found by default)
@@ -682,14 +700,33 @@ or use `--print`.
 npm install
 npm run typecheck
 npm test                    # unit + type tests, no database needed
-npm run test:integration    # needs HANA_* env vars; writes only to temporary tables
+npm run test:integration    # needs a HANA, see below
+```
+
+The integration tests read the connection from `HANA_*` variables or from the file named by
+`HANA_ORM_ENV_FILE` (for example `.env.test`), and skip themselves when there is none. By
+default they only write to local temporary tables. With `HANA_ORM_ALLOW_DDL=1` the tests that
+need DDL (migrations, `db pull`, `createMany`, many-to-many, full-text) also run; they create
+their own schemas (`HANA_ORM_IT_…`, `HANA_ORM_FT_…`) and drop them at the end, so use a local or
+test database:
+
+```sh
+HANA_ORM_ENV_FILE=.env.test HANA_ORM_ALLOW_DDL=1 npm run test:integration
 ```
 
 `docker-compose.hana.yml` starts a local SAP HANA Express for the integration tests (see the
-comments in the file). The **HANA integration** workflow does the same in CI every night and
-on demand (Actions → HANA integration → Run workflow, optionally on a larger or self-hosted
-runner): it starts HANA Express, checks the connection with `node scripts/check-hana.ts` and
-runs `npm run test:integration` with `HANA_ORM_ALLOW_DDL=1`, failing if any test was skipped.
+comments in the file; on Apple Silicon it runs under emulation). HANA does not run in GitHub
+Actions: CI there runs typecheck, unit tests and build only. Before merging, run the full check
+locally:
+
+```sh
+npm run ci:local            # typecheck, unit tests, build, HANA check, all integration tests
+npm run ci:local -- --bench # also the HANA benchmark
+```
+
+`ci:local` uses `.env.test` (or `HANA_ORM_ENV_FILE`), starts a stopped `hxe` or `hana-orm-hxe`
+container when HANA does not answer (`HANA_CONTAINER` names another one), fails if any
+integration test was skipped and writes its logs to `.local/ci/`.
 
 ## License
 

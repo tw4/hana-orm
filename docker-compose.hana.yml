@@ -4,16 +4,18 @@
 #   2. docker compose -f docker-compose.hana.yml up -d   (first start takes ~10 minutes)
 #   3. Put the connection into .env.test (ignored by git):
 #        HANA_HOST=localhost  HANA_PORT=39041  HANA_USER=SYSTEM  HANA_PASSWORD=...  HANA_DATABASE=HXE
-#   4. HANA_ORM_ENV_FILE=.env.test npm run test:integration
+#   4. npm run ci:local   (or HANA_ORM_ENV_FILE=.env.test npm run test:integration)
 #      (HANA_ORM_ALLOW_DDL=1 also runs the migration tests)
 #
 # Notes:
 #   - HANA deletes password.json after the first start. To start from scratch, empty
 #     .local/hxe and create password.json again.
 #   - It needs ~10 GB of free disk; with less, the log volume fills up and the start hangs.
-#   - The image is amd64 only. On Apple Silicon the tenant database does not start under
-#     emulation; run the container on an amd64 machine and set HANA_HOST to it in .env.test.
-#     The connection is not encrypted, so use it on a trusted network only.
+#   - The image is amd64 only. On Apple Silicon it runs under emulation in Docker Desktop
+#     (checked with Docker Desktop 29.1, 8 GB of memory for Docker; later starts take about a
+#     minute). If the tenant database does not start ("Database could not be started"), run the
+#     container on an amd64 machine and set HANA_HOST to it in .env.test. That connection is not
+#     encrypted, so use it on a trusted network only.
 #   - docker/hana-seccomp.json is Docker's default seccomp profile (moby v27.3.1) plus the
 #     NUMA syscalls HANA needs (mbind, move_pages, get/set_mempolicy).
 #

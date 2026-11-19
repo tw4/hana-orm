@@ -9,15 +9,17 @@ Releases are published by `.github/workflows/release.yml` when a version tag is 
 
 ## Steps
 
-1. Move the entries under `## [Unreleased]` in `CHANGELOG.md` to a new `## [<version>]` section
+1. Run `npm run ci:local -- --bench` on the commit to release. The HANA integration tests do not
+   run in GitHub Actions, so this is the only place they run.
+2. Move the entries under `## [Unreleased]` in `CHANGELOG.md` to a new `## [<version>]` section
    (keep **Upgrade notes** for anything that needs action when upgrading) and add its link at the
    bottom.
-2. Set the version and create the tag: `npm version 0.2.0-beta.1` (or `npm version 0.2.0`). This
+3. Set the version and create the tag: `npm version 0.2.0-beta.1` (or `npm version 0.2.0`). This
    commits `package.json` and tags `v0.2.0-beta.1`.
-3. `git push --follow-tags`.
+4. `git push --follow-tags`.
 
 When the version bump and changelog come in through a pull request (as for `1.0.0-rc.1`), skip
-step 2's commit and only tag the merge commit: `git tag v1.0.0-rc.1 <commit>` and
+step 3's commit and only tag the merge commit: `git tag v1.0.0-rc.1 <commit>` and
 `git push origin v1.0.0-rc.1`.
 
 The workflow checks that the tag equals `v<package.json version>` and that `CHANGELOG.md` has a
@@ -34,5 +36,5 @@ changelog section as notes.
 
 ## Benchmarks
 
-Copy the HANA benchmark results of the release commit to `bench/results/<version>.md` (see
+Copy the benchmark results of step 1 (`.local/ci/bench-results.md` / `.json`) to `bench/results/<version>.md` (see
 `bench/README.md`, when present).

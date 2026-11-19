@@ -22,6 +22,7 @@ nav_order: 6
 | `generate [--watch]` | generate the typed client into each generator's `output` |
 | `validate` | check the schema |
 | `format [--check]` | format the schema files; `--check` lists unformatted files and exits 1 |
+| `studio [--port 5555] [--host 127.0.0.1] [--read-only]` | browse and edit data in a local web page (URL with an access token) |
 | `version` | print the version |
 
 ## Database

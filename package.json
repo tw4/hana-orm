@@ -47,6 +47,7 @@
     "typecheck": "node test/setup.ts && tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
     "test:integration": "node test/setup.ts && node --test \"test/integration/**/*.itest.ts\"",
+    "ci:local": "bash scripts/ci-local.sh",
     "bench:hana": "node bench/hana/run.ts",
     "prepare": "npm run build",
     "pretest": "node test/setup.ts"

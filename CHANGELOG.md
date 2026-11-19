@@ -8,11 +8,11 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 
 ## [Unreleased]
 
-## [1.0.0-rc.1] - 2026-11-18
+## [1.0.0-rc.1] - 2026-11-19
 
-Release candidate for 1.0: every v0.2, v0.3 and v1.0 roadmap item except the optional data
-browser (#37). Published under the `next` tag; `1.0.0` follows once the HANA Express
-integration tests and benchmarks have run on this version.
+Release candidate for 1.0: every v0.2, v0.3 and v1.0 roadmap item, including the data browser
+(`hana-orm studio`, #37). Published under the `next` tag. The integration tests and benchmarks
+(`npm run ci:local -- --bench`) passed on this version against HANA Express 2.00.088.
 
 ### Added
 
@@ -24,8 +24,11 @@ integration tests and benchmarks have run on this version.
   connection pool health checks, reconnect, `statementTimeout` and graceful shutdown (#15).
 - SQL-like query builder with typed tables (#28), `sql` fragments in object-API `where` (#31),
   prepared queries with placeholders (#30), `$batch` (#32), schema definitions in TypeScript (#29).
-- CI: nightly HANA Express integration tests (#33) and benchmarks against the raw driver (#39);
-  release workflow publishing to npm with `next` / `latest` tags (#38).
+- `npm run ci:local`: typecheck, unit tests, build and every integration test against a local
+  HANA Express (#33), optionally with benchmarks against the raw driver (#39); release workflow
+  publishing to npm with `next` / `latest` tags (#38). HANA does not run in GitHub Actions.
+- `hana-orm studio`: a local web page to browse, filter and edit the data of every model, with
+  foreign-key navigation and a `--read-only` mode (#37).
 - Documentation site at <https://tw4.github.io/hana-orm/> with guides for moving from Prisma,
   TypeORM and `@sap/hana-client` (#36).
 - VS Code extension for `.hana` files: highlighting, diagnostics, formatting, go to definition and
@@ -34,6 +37,9 @@ integration tests and benchmarks have run on this version.
 ### Fixed
 
 - `migrate show <id>` never matched an id.
+- Introspection failed on a real HANA (`invalid column name: COLUMN_NAME`), which broke `db push`,
+  `db pull`, `migrate plan` and drift checks: `SYS.FULLTEXT_INDEXES` has no column name, so it is
+  now read from `SYS.INDEX_COLUMNS`.
 
 ### Upgrade notes
 

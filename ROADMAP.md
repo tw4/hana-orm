@@ -129,6 +129,7 @@ Package layout (single package first, split later if needed):
 - Documentation site and examples, including a read-only example on a large existing
   schema.
 - Editor syntax highlighting for `.hana` files.
+- `hana-orm studio`: a local web UI to browse and edit data (#37).
 
 ### M7 – Hardening and release
 - Integration test suite against a real HANA instance in CI (test schema only).
@@ -136,6 +137,5 @@ Package layout (single package first, split later if needed):
 - `1.0.0` release, published as a private package or installed from GitHub.
 
 ## Out of scope for now
-- Studio / GUI.
 - Databases other than SAP HANA.
 - HANA calculation views and graph workspaces (may come later as read-only models).
