@@ -8,6 +8,10 @@
     "type": "git",
     "url": "git+https://github.com/tw4/hana-orm.git"
   },
+  "homepage": "https://tw4.github.io/hana-orm/",
+  "bugs": {
+    "url": "https://github.com/tw4/hana-orm/issues"
+  },
   "keywords": [
     "sap",
     "hana",
