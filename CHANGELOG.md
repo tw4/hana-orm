@@ -8,6 +8,21 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-11-19
+
+The first version that shows up on npm with its README: `1.0.0-rc.1` was staged but never
+published. No API changes since `1.0.0-rc.1`.
+
+### Changed
+
+- Until 1.0 is out, release candidates are published under the `latest` tag as well, so
+  `npm install hana-orm` installs them (`@next` still works).
+- package.json: a clearer description, more keywords, `author`, `homepage` and `bugs`.
+- README: an overview for GitHub and npm, with a feature list and a comparison.
+- Documentation site rebuilt with Astro Starlight and redesigned: an animated home page, section
+  overviews with cards, a dark theme by default, and a description for every page (#76, #78, #79).
+  Tables no longer push the header off-screen on phones.
+
 ## [1.0.0-rc.1] - 2026-11-19
 
 Release candidate for 1.0: every v0.2, v0.3 and v1.0 roadmap item, including the data browser
@@ -62,6 +77,7 @@ pagination, relation ordering, implicit many-to-many), migrations (`plan`, `depl
 `resolve`, `baseline`, `diff`, `reset`, locking with heartbeat, renames and schema moves),
 `db pull` / `push` / `seed` / `execute`, the formatter and multi-file schemas.
 
-[Unreleased]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.1...main
+[Unreleased]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.2...main
+[1.0.0-rc.2]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.1...v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/tw4/hana-orm/releases/tag/v1.0.0-rc.1
 [0.1.0-alpha.0]: https://github.com/tw4/hana-orm/commits/main

@@ -1,7 +1,8 @@
 name: Release
 
 # Stages a release on npm when a version tag (v1.2.3 or v1.2.3-beta.1) is pushed.
-# Pre-releases go to the `next` dist-tag, stable versions to `latest`, both with provenance.
+# Pre-releases go to the `next` dist-tag (or `latest` while npm has no stable version yet),
+# stable versions to `latest`, all with provenance.
 # The GitHub release gets the matching CHANGELOG.md section as its notes.
 #
 # The workflow uses `npm stage publish`: the version is uploaded but not public until a
@@ -61,7 +62,8 @@ jobs:
       - name: GitHub release
         run: |
           flags=""
-          if [ "$DIST_TAG" = "next" ]; then flags="--prerelease"; fi
+          # a version with a "-" (1.0.0-rc.2) is a pre-release, whatever its npm dist-tag
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md $flags
         env:
           GH_TOKEN: ${{ github.token }}

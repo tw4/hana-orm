@@ -1,8 +1,9 @@
 {
   "name": "hana-orm",
-  "version": "1.0.0-rc.1",
-  "description": "Type-safe TypeScript ORM for SAP HANA with a declarative schema, typed client and migrations CLI",
+  "version": "1.0.0-rc.2",
+  "description": "Type-safe TypeScript ORM for SAP HANA and HANA Cloud: Prisma-like schema, generated client, SQL-like query builder, migrations and a data browser.",
   "license": "Apache-2.0",
+  "author": "tw4 (https://github.com/tw4)",
   "type": "module",
   "repository": {
     "type": "git",
@@ -14,11 +15,25 @@
   },
   "keywords": [
     "sap",
+    "sap-hana",
     "hana",
+    "hana-cloud",
+    "hana-express",
+    "sap-btp",
     "orm",
     "typescript",
+    "type-safe",
+    "database",
+    "sql",
+    "query-builder",
     "migrations",
-    "query-builder"
+    "schema",
+    "prisma",
+    "prisma-alternative",
+    "typeorm-alternative",
+    "nodejs",
+    "hdb",
+    "@sap/hana-client"
   ],
   "engines": {
     "node": ">=22.12"
