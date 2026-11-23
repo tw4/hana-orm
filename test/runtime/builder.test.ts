@@ -83,7 +83,7 @@ test("self-join with alias, subqueries, exists and inArray", () => {
   const published = db.select({ id: post.id }).from(post).where(and(eq(post.authorId, user.id), eq(post.published, true)));
   const q3 = db.select({ id: user.id }).from(user).where(and(exists(published), inArray(user.id, [1, 2]), ilike(user.email, "%A%")));
   assert.deepEqual(q3.toSQL(), {
-    sql: 'SELECT "user"."id" AS "id" FROM "APP"."USERS" "user" WHERE (EXISTS (SELECT "post"."id" AS "id" FROM "APP"."Post" "post" WHERE ("post"."authorId" = "user"."id") AND ("post"."published" = ?))) AND ("user"."id" IN (?, ?)) AND (LOWER("user"."email") LIKE LOWER(?))',
+    sql: 'SELECT "user"."id" AS "id" FROM "APP"."USERS" "user" WHERE (EXISTS (SELECT "post"."id" AS "id" FROM "APP"."Post" "post" WHERE ("post"."authorId" = "user"."id") AND ("post"."published" = ?))) AND ("user"."id" IN (?, ?)) AND (LOWER("user"."email") LIKE LOWER(?) || \'\')',
     params: [true, 1, 2, "%A%"],
   });
   assert.equal(db.select({ id: user.id }).from(user).where(inArray(user.id, [])).toSQL().sql.endsWith("WHERE 1 = 0"), true);
@@ -121,6 +121,30 @@ test("insert uses createMany (defaults, batching); update and delete render with
   assert.equal(await upd, 3);
 
   assert.deepEqual(db.delete(post).where(eq(post.published, false)).toSQL(), { sql: 'DELETE FROM "APP"."Post" "post" WHERE "post"."published" = ?', params: [false] });
+});
+
+test("insert toSQL shows the createMany statement without running it", () => {
+  const { db, driver } = setup();
+  const ins = db.insert(user).values([
+    { email: "a@x", name: "A" },
+    { email: "b@x", name: "B" },
+  ]);
+  const s = ins.toSQL();
+  assert.match(s.sql, /^INSERT INTO "APP"\."USERS" \(.*"email".*"name".*\) VALUES \(\?(, \?)*\)$/);
+  assert.equal(s.rows.length, 2);
+  assert.deepEqual(s.params, s.rows[0]);
+  assert.ok(s.rows[0]!.includes("a@x") && s.rows[1]!.includes("b@x"));
+  assert.equal(driver.calls.length, 0, "toSQL does not run anything");
+
+  // rows that set different fields run as separate statements
+  const mixed = db.insert(user).values([{ email: "a@x" }, { email: "b@x", name: "B" }]);
+  assert.throws(() => mixed.toSQL(), /2 different sets of fields.*toSQLStatements/);
+  const all = mixed.toSQLStatements();
+  assert.equal(all.length, 2);
+  assert.ok(all.every((x) => x.sql.startsWith("INSERT INTO") && x.params.length === 1));
+
+  assert.throws(() => ins.prepare(), /cannot be prepared/);
+  assert.throws(() => db.insert(user).values({ name: "no email" } as never).toSQL(), /Missing required field 'email'/);
 });
 
 test("builder errors", () => {

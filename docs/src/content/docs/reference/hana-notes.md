@@ -63,6 +63,18 @@ Use `NVARCHAR(n)` instead of `NCLOB` for text you sort or compare.
 
 HANA has a real `BOOLEAN` type, which `Boolean` fields use.
 
+## Case-insensitive comparisons
+
+`mode: "insensitive"` and `ilike()` lower both sides in HANA: `LOWER(column) LIKE LOWER(?) || ''`.
+The `|| ''` matters: on column tables HANA may turn `LOWER(a) = LOWER(b)` (and, in some
+versions, `LOWER(a) LIKE LOWER(b)`) into its own case-insensitive comparison, which does not
+match the Turkish `İ` with `i`, so rows are missing without an error. With the concatenation both
+values go through `LOWER`, which maps `İ` to `i`.
+
+The value is lower-cased by HANA and not by the client on purpose: HANA's case mapping differs
+from JavaScript's for some characters (`İ`, newer Unicode letters), and both sides have to use
+the same one. If you write such a comparison yourself with `sql`, use the same form.
+
 ## Dates and time zones
 
 `TIMESTAMP` has no time zone. hana-orm treats every timestamp as UTC, both ways, and uses

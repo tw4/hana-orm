@@ -21,9 +21,25 @@ test("findMany builds a parameterized select with filters, order and limit", asy
   const { sql, params } = driver.calls[0]!;
   assert.equal(
     sql,
-    `SELECT t0."id" AS "id", t0."email" AS "email", t0."name" AS "name", t0."role" AS "role", t0."balance" AS "balance", t0."visits" AS "visits", t0."active" AS "active", t0."CREATED_AT" AS "createdAt", t0."UPDATED_AT" AS "updatedAt" FROM "APP"."USERS" t0 WHERE (LOWER(t0."email") LIKE LOWER(?) ESCAPE '\\') AND (t0."role" = ?) AND (t0."name" IS NULL) AND ((t0."active" = ?) OR (t0."visits" > ?)) ORDER BY t0."CREATED_AT" DESC, t0."name" ASC NULLS LAST, t0."id" ASC LIMIT 20 OFFSET 40`,
+    `SELECT t0."id" AS "id", t0."email" AS "email", t0."name" AS "name", t0."role" AS "role", t0."balance" AS "balance", t0."visits" AS "visits", t0."active" AS "active", t0."CREATED_AT" AS "createdAt", t0."UPDATED_AT" AS "updatedAt" FROM "APP"."USERS" t0 WHERE (LOWER(t0."email") LIKE LOWER(?) || '' ESCAPE '\\') AND (t0."role" = ?) AND (t0."name" IS NULL) AND ((t0."active" = ?) OR (t0."visits" > ?)) ORDER BY t0."CREATED_AT" DESC, t0."name" ASC NULLS LAST, t0."id" ASC LIMIT 20 OFFSET 40`,
   );
   assert.deepEqual(params, ["%50\\%\\_off%", "admin", true, "10"]);
+});
+
+test("case-insensitive filters lower the value as LOWER(?) || '' so HANA keeps İ = i (#83)", async () => {
+  const { driver, db } = setup();
+  await db.user.findMany({ where: { name: { equals: "İLKER", mode: "insensitive" } }, select: { id: true } });
+  await db.user.findMany({ where: { name: { in: ["A", "B"], mode: "insensitive" } }, select: { id: true } });
+  await db.user.findMany({ where: { name: { not: "A", mode: "insensitive" } }, select: { id: true } });
+  await db.user.findMany({ where: { name: { not: { startsWith: "A" }, mode: "insensitive" } }, select: { id: true } });
+  const where = driver.calls.map((c) => c.sql.slice(c.sql.indexOf(" WHERE ") + 7));
+  assert.deepEqual(where, [
+    `LOWER(t0."name") = LOWER(?) || ''`,
+    `LOWER(t0."name") IN (LOWER(?) || '', LOWER(?) || '')`,
+    `LOWER(t0."name") <> LOWER(?) || ''`,
+    `NOT (LOWER(t0."name") LIKE LOWER(?) || '' ESCAPE '\\')`,
+  ]);
+  assert.deepEqual(driver.calls[0]!.params, ["İLKER"], "the value is lower-cased by HANA, not by the client");
 });
 
 test("decodes driver values into JS types", async () => {

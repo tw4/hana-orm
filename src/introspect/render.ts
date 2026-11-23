@@ -653,7 +653,12 @@ function renderModel(plan: ModelPlan, defaultSchema: string): string {
   if (modelIgnored(plan)) block.push("@@ignore");
   const head: string[] = [];
   const doc = ("comment" in t && t.comment ? t.comment : undefined) ?? plan.existing?.decl.doc;
-  if (plan.kind === "model" && !(t as PhysicalTable).primaryKey) head.push("// This table has no primary key; the client treats it as read-only.");
+  // Same rule as the generated client: only a model without a primary key and without a unique
+  // constraint loses the single-row writes (update, upsert, delete by a unique field).
+  if (plan.kind === "model" && !(t as PhysicalTable).primaryKey && !(t as PhysicalTable).uniques.length) {
+    head.push("// This table has no primary key or unique constraint: rows cannot be addressed one by one,");
+    head.push("// so update, upsert and delete are not generated; use updateMany and deleteMany.");
+  }
   const parts = [`${head.length ? `${head.join("\n")}\n` : ""}${docText(doc)}${plan.kind} ${plan.name} {`, ...body];
   if (block.length) {
     if (body.length) parts.push("");

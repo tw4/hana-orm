@@ -17,6 +17,8 @@ export interface BuilderHost {
   run<T>(write: boolean, fn: (q: Queryable) => Promise<T>): Promise<T>;
   /** The object API's createMany (client defaults, batching, validation). */
   createMany(model: ModelDef, rows: Record<string, unknown>[], q: Queryable): Promise<number>;
+  /** The statements `createMany` would run for `rows`: one per set of fields, with one parameter list per row. */
+  createManyStatements(model: ModelDef, rows: Record<string, unknown>[]): { sql: string; params: unknown[][] }[];
 }
 
 type AnySource = { readonly [TABLE]: SourceMeta };
@@ -383,8 +385,35 @@ export class InsertValues extends Runnable<number> {
     this.#rows = rows;
   }
   render(): string {
-    throw new ValidationError("insert() runs through createMany and has no single SQL text");
+    throw new ValidationError("insert() cannot be embedded in another statement; use toSQL() to see its SQL");
   }
+
+  /**
+   * The INSERT and the parameters of the first row; `rows` has the parameters of every row, which
+   * are sent as one batch. Rows that set different fields need different statements, so call
+   * `toSQL()` on one `values()` per field set (or use `toSQLStatements()`).
+   */
+  override toSQL(): { sql: string; params: unknown[]; rows: unknown[][] } {
+    const statements = this.toSQLStatements();
+    if (statements.length !== 1) {
+      throw new ValidationError(
+        `insert() rows set ${statements.length} different sets of fields, so they run as ${statements.length} statements; use toSQLStatements() to see all of them`,
+      );
+    }
+    const s = statements[0]!;
+    return { sql: s.sql, params: s.params[0] ?? [], rows: s.params };
+  }
+
+  /** Every statement the insert runs (one per set of fields), with the parameters of each row. */
+  toSQLStatements(): { sql: string; params: unknown[][] }[] {
+    return this.host.createManyStatements(this.#model, this.#rows);
+  }
+
+  /** An insert runs as a batch per set of fields, so it cannot be prepared as one statement. */
+  override prepare(): never {
+    throw new ValidationError("insert() cannot be prepared: it runs as a batch through createMany; use toSQL() to see the statement");
+  }
+
   protected run(): Promise<number> {
     throw new ValidationError("insert() runs through createMany");
   }

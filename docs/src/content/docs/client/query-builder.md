@@ -51,7 +51,7 @@ await db.selectDistinct({ role: user.role }).from(user);        // SELECT DISTIN
 | `.orderBy(...exprs)` | `asc(col)`, `desc(col)`, or a column (ascending) |
 | `.limit(n)`, `.offset(n)` | paging |
 | `.as("name")` | use as a subquery |
-| `.toSQL()` | `{ sql, params }` without running |
+| `.toSQL()` | `{ sql, params }` without running (for `insert`, see [below](#insert-update-delete)) |
 | `.prepare()` | a [prepared query](#prepared-queries) |
 
 `select()` without fields on a join returns one nested object per table:
@@ -133,6 +133,10 @@ await db.delete(post).where(eq(post.published, false));                         
 
 - `insert` applies the same defaults and validation as `createMany` (uuid, `now()`,
   `@updatedAt`).
+- `insert` runs as one batch per set of fields the rows give. Its `toSQL()` returns the
+  statement with `params` of the first row and `rows` with the parameters of every row; when the
+  rows give different sets of fields it throws, and `toSQLStatements()` returns every statement.
+  An insert cannot be `prepare()`d.
 - HANA has no `RETURNING`, so all three resolve with the number of affected rows.
 - `update` without `.where()` updates every row; so does `delete`.
 

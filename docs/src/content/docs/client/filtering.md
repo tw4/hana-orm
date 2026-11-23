@@ -26,7 +26,7 @@ await db.user.findMany({ where: { name: { not: null } } });          // IS NOT N
 | `in`, `notIn` | all | `IN (…)`, `NOT IN (…)` |
 | `lt`, `lte`, `gt`, `gte` | numbers, strings, dates | `<`, `<=`, `>`, `>=` |
 | `contains`, `startsWith`, `endsWith` | `String` | `LIKE` with escaped wildcards |
-| `mode: "insensitive"` | `String` | compares `LOWER(…)` |
+| `mode: "insensitive"` | `String` | compares `LOWER(column)` with `LOWER(?) \|\| ''`, see [case-insensitive comparisons](/hana-orm/reference/hana-notes/#case-insensitive-comparisons) |
 | `search` | `String` | `CONTAINS(column, ?)`, see [full-text search](#full-text-search) |
 
 ```ts
@@ -129,7 +129,7 @@ the queried table render as qualified identifiers; every other value is bound:
 import { sql, tables } from "./generated/hana/index.ts";
 
 await db.user.findMany({
-  where: { role: "AUTHOR", AND: [sql`LOWER(${tables.user.email}) = LOWER(${email})`] },
+  where: { role: "AUTHOR", AND: [sql`LOWER(${tables.user.email}) = LOWER(${email}) || ''`] },
 });
 
 await db.user.findMany({
