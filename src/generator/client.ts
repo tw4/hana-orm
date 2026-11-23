@@ -274,12 +274,22 @@ function modelTypes(contract: Contract, m: ModelDef): string {
   // delegate
   L.push(doc(`Queries for model {@link ${M}} (table ${m.schema ? `${m.schema}.` : ""}${m.dbName}).`) + `export interface ${M}Delegate<G = {}, R = {}> {`);
   L.push(`  /** @internal Types of computed fields from \`$extends({ result })\` (type-only). */`, `  readonly $computed?: R;`);
-  L.push(`  findMany<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>[]>;`);
-  L.push(`  findFirst<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A> | null>;`);
-  L.push(`  findFirstOrThrow<A extends $r.ArgsWithComputed<${M}FindManyArgs, R> = {}>(args?: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
+  // A call without arguments gets its own overload instead of a `= {}` default on `A`: with the
+  // default, the TypeScript language service offers no field names inside `where`, `select` or
+  // `orderBy` (empty object or after a comma), see issue #82.
+  const noArgs = `$r.WithComputed<${M}GetPayload<$r.StripComputed<{}, R>, G>, R, {}>`;
+  const withArgs = `$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>`;
+  const findManyArgs = `A extends $r.ArgsWithComputed<${M}FindManyArgs, R>`;
+  L.push(`  findMany(): $r.PreparableQuery<${noArgs}[]>;`);
+  L.push(`  findMany<${findManyArgs}>(args?: A): $r.PreparableQuery<${withArgs}[]>;`);
+  L.push(`  findFirst(): $r.PreparableQuery<${noArgs} | null>;`);
+  L.push(`  findFirst<${findManyArgs}>(args?: A): $r.PreparableQuery<${withArgs} | null>;`);
+  L.push(`  findFirstOrThrow(): $r.PreparableQuery<${noArgs}>;`);
+  L.push(`  findFirstOrThrow<${findManyArgs}>(args?: A): $r.PreparableQuery<${withArgs}>;`);
   L.push(`  findUnique<A extends $r.ArgsWithComputed<${M}FindUniqueArgs, R>>(args: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A> | null>;`);
   L.push(`  findUniqueOrThrow<A extends $r.ArgsWithComputed<${M}FindUniqueArgs, R>>(args: A): $r.PreparableQuery<$r.WithComputed<${M}GetPayload<$r.StripComputed<A, R>, G>, R, A>>;`);
-  L.push(`  count<A extends ${M}CountArgs = {}>(args?: A): Promise<A extends { select: infer S } ? { [K in $r.SelectedKeys<S>]: number } : number>;`);
+  L.push(`  count(): Promise<number>;`);
+  L.push(`  count<A extends ${M}CountArgs>(args?: A): Promise<A extends { select: infer S } ? { [K in $r.SelectedKeys<S>]: number } : number>;`);
   L.push(`  aggregate<A extends ${M}AggregateArgs>(args: A): Promise<$r.AggregatePayload<${M}, A>>;`);
   L.push(`  groupBy<A extends ${M}GroupByArgs>(args: A): Promise<$r.GroupByPayload<${M}, A>[]>;`);
   if (m.kind !== "view") {
