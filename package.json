@@ -1,6 +1,6 @@
 {
   "name": "hana-orm",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "description": "Type-safe TypeScript ORM for SAP HANA and HANA Cloud: Prisma-like schema, generated client, SQL-like query builder, migrations and a data browser.",
   "license": "Apache-2.0",
   "author": "tw4 (https://github.com/tw4)",

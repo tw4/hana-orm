@@ -132,7 +132,7 @@ Requires Node.js 22.12+. Continue with
 
 ## Status
 
-hana-orm is a **release candidate for 1.0** (`1.0.0-rc.2`). The API is meant to be stable for
+hana-orm is a **release candidate for 1.0** (`1.0.0-rc.3`). The API is meant to be stable for
 1.0; breaking changes until then are listed in the [changelog](CHANGELOG.md). Every release runs
 its integration suite against SAP HANA Express. See the [roadmap](ROADMAP.md) for what comes
 next.
