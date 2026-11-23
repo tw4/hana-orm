@@ -1436,6 +1436,16 @@ export class Engine {
   }
 
   private async createManyRaw(model: ModelDef, rows: Row[], q: Queryable, skipDuplicates = false): Promise<number> {
+    let count = 0;
+    for (const s of this.createManyStatements(model, rows, skipDuplicates)) count += await q.executeBatch(s.sql, s.params);
+    return count;
+  }
+
+  /**
+   * The statements createMany runs for `rows`, without running them: one INSERT per set of
+   * fields the rows give, with the parameters of each row of that set (sent as one batch).
+   */
+  createManyStatements(model: ModelDef, rows: Row[], skipDuplicates = false): { sql: string; params: unknown[][] }[] {
     this.assertWritable(model);
     const cols = columnFields(model);
     const groups = new Map<string, { fields: ColumnFieldDef[]; rows: Row[] }>();
@@ -1447,13 +1457,11 @@ export class Engine {
       group.rows.push(values);
       groups.set(sig, group);
     }
-    let count = 0;
-    for (const g of groups.values()) {
+    return [...groups.values()].map((g) => {
       // rows of a group set the same fields, so they leave the same sequence fields to fill
       const insert = this.createManyInsert(model, g.fields, skipDuplicates, this.pendingSequences(model, g.rows[0]!));
-      count += await q.executeBatch(insert.sql, g.rows.map(insert.params));
-    }
-    return count;
+      return { sql: insert.sql, params: g.rows.map(insert.params) };
+    });
   }
 
   /** Validated column values of one createMany row, with client-side defaults applied. */

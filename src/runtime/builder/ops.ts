@@ -35,9 +35,12 @@ export function like(left: Expr<string | null>, pattern: string | Placeholder | 
 export function notLike(left: Expr<string | null>, pattern: string | Placeholder | SQL<unknown>): SQL<boolean> {
   return new SQL<boolean>([left, " NOT LIKE ", operand(left, pattern)]);
 }
-/** Case-insensitive LIKE: `LOWER(x) LIKE LOWER(?)`. */
+/**
+ * Case-insensitive LIKE: `LOWER(x) LIKE LOWER(?) || ''`. The `|| ''` keeps HANA from rewriting
+ * the comparison into one that does not match 'İ' with 'i' (issue #83).
+ */
 export function ilike(left: Expr<string | null>, pattern: string | Placeholder | SQL<unknown>): SQL<boolean> {
-  return new SQL<boolean>(["LOWER(", left, ") LIKE LOWER(", operand(left, pattern), ")"]);
+  return new SQL<boolean>(["LOWER(", left, ") LIKE LOWER(", operand(left, pattern), ") || ''"]);
 }
 
 /** A subquery usable as a set: `inArray(users.id, db.select({ id: posts.authorId }).from(posts))`. */

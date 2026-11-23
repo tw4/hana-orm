@@ -58,7 +58,7 @@ test("string filters match the string at the path, optionally case-insensitive, 
   await db.doc.findMany({ where: { data: { path: ["name"], string_contains: "50%_off" } } });
   assert.deepEqual(where(), { sql: `JSON_VALUE(t0."data", '$.name') LIKE ? ESCAPE '\\'`, params: ["%50\\%\\_off%"] });
   await db.doc.findMany({ where: { data: { path: ["name"], string_starts_with: "Ab", mode: "insensitive" } } });
-  assert.deepEqual(where(), { sql: `LOWER(JSON_VALUE(t0."data", '$.name')) LIKE LOWER(?) ESCAPE '\\'`, params: ["Ab%"] });
+  assert.deepEqual(where(), { sql: `LOWER(JSON_VALUE(t0."data", '$.name')) LIKE LOWER(?) || '' ESCAPE '\\'`, params: ["Ab%"] });
   await db.doc.findMany({ where: { data: { string_ends_with: "z" } } });
   assert.deepEqual(where(), { sql: `JSON_VALUE(t0."data", '$') LIKE ? ESCAPE '\\'`, params: ["%z"] }, "without a path: the document itself");
 });

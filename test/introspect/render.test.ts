@@ -90,7 +90,8 @@ test("fresh pull: models, relations, keys, defaults and views", () => {
   const src = r.source;
   assert.ok(src.startsWith('datasource db {\n  provider = "hana"\n}\n\n'));
   assert.deepEqual(r.added, ["AuditLog", "Customers", "Orders", "OrderItems", "ActiveCustomers"]);
-  assert.match(src, /\/\/ This table has no primary key; the client treats it as read-only.\nmodel AuditLog \{/);
+  assert.match(src, /\/\/ This table has no primary key or unique constraint: rows cannot be addressed one by one,\n\/\/ so update, upsert and delete are not generated; use updateMany and deleteMany.\nmodel AuditLog \{/);
+  assert.doesNotMatch(src, /read-only/);
   assert.match(block(src, "Customers"), /^\/\/\/ People who order\nmodel Customers \{/);
   assert.match(src, /  id +Int +@id @default\(autoincrement\(\)\) @map\("ID"\)\n/);
   assert.match(src, /  email +String +@unique @map\("EMAIL"\) @db\.NVarChar\(255\)/);
@@ -245,6 +246,15 @@ test("re-pull is stable for unnamed relations with a custom FK name (map: is not
   const first = renderSchema(p, { defaultSchema: "SHOP" }).source;
   assert.match(first, /order +Orders +@relation\(fields: \[orderId\], references: \[id\], map: "FK_ITEMS_ORDER"\)/);
   assert.equal(renderSchema(p, { existingSource: first, defaultSchema: "SHOP" }).source, first);
+});
+
+test("a table without a primary key but with a unique constraint gets no key comment", () => {
+  const p = physical();
+  p.tables["AUDIT_LOG"]!.uniques.push({ name: "UQ_AUDIT_LOG_AT", columns: ["AT"] });
+  const src = renderSchema(p, { defaultSchema: "SHOP" }).source;
+  assert.match(block(src, "AuditLog"), /^model AuditLog \{/);
+  assert.doesNotMatch(block(src, "AuditLog"), /no primary key/);
+  assert.match(block(src, "AuditLog"), /at +DateTime +@unique /);
 });
 
 test("models outside a filtered pull are kept unchanged", () => {

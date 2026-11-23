@@ -122,6 +122,14 @@ function isFilterObject(field: ColumnFieldDef, value: unknown): value is AnyReco
   return true;
 }
 
+/**
+ * The value side of a case-insensitive comparison: `LOWER(?) || ''`. Without the `|| ''`, HANA
+ * may turn `LOWER(a) op LOWER(b)` on a column table into its own case-insensitive comparison,
+ * which does not match 'İ' (U+0130) with 'i' and so misses rows (issue #83). The value is still
+ * lower-cased by HANA, so both sides use the same case mapping.
+ */
+export const lowerValue = (bound: string): string => `LOWER(${bound}) || ''`;
+
 export function scalarCondition(engine: Engine, field: ColumnFieldDef, col: string, filter: unknown, ctx: SqlContext): string | null {
   const enc = (v: unknown) => encodeValue(engine.contract, field, v);
   if (filter === null) return `${col} IS NULL`;
@@ -134,7 +142,7 @@ export function scalarCondition(engine: Engine, field: ColumnFieldDef, col: stri
 
   const insensitive = filter.mode === "insensitive";
   const lhs = insensitive ? `LOWER(${col})` : col;
-  const rhs = (v: unknown) => (insensitive ? `LOWER(${ctx.bind(enc(v))})` : ctx.bind(enc(v)));
+  const rhs = (v: unknown) => (insensitive ? lowerValue(ctx.bind(enc(v))) : ctx.bind(enc(v)));
   const parts: string[] = [];
 
   for (const [op, v] of Object.entries(filter)) {
@@ -177,7 +185,7 @@ export function scalarCondition(engine: Engine, field: ColumnFieldDef, col: stri
       case "endsWith": {
         if (typeof v !== "string") throw new ValidationError(`'${op}' on field '${field.name}' expects a string`);
         const pattern = op === "contains" ? `%${escapeLike(v)}%` : op === "startsWith" ? `${escapeLike(v)}%` : `%${escapeLike(v)}`;
-        const bound = insensitive ? `LOWER(${ctx.bind(pattern)})` : ctx.bind(pattern);
+        const bound = insensitive ? lowerValue(ctx.bind(pattern)) : ctx.bind(pattern);
         parts.push(`${lhs} LIKE ${bound} ESCAPE '\\'`);
         break;
       }
@@ -247,7 +255,7 @@ function jsonCondition(engine: Engine, field: ColumnFieldDef, col: string, filte
     throw new ValidationError(`'${key}' on field '${name}' with a path compares a string, number${op === "=" ? ", boolean" : ""} or null, got ${JSON.stringify(v)}`);
   };
   const like = (pattern: string): string =>
-    insensitive ? `LOWER(${value}) LIKE LOWER(${ctx.bind(pattern)}) ESCAPE '\\'` : `${value} LIKE ${ctx.bind(pattern)} ESCAPE '\\'`;
+    insensitive ? `LOWER(${value}) LIKE ${lowerValue(ctx.bind(pattern))} ESCAPE '\\'` : `${value} LIKE ${ctx.bind(pattern)} ESCAPE '\\'`;
   const element = (v: unknown, key: string): string => {
     if (!isJsonScalar(v)) throw new ValidationError(`'${key}' on field '${name}' takes strings, numbers, booleans or null, got ${JSON.stringify(v)}`);
     return jsonScalarRegex(v);

@@ -597,6 +597,7 @@ export class BaseClient {
       defaultSchema: e.defaultSchema,
       run: (write, fn) => this._run(write, fn),
       createMany: async (model, rows, q) => (await e.createMany(model, { data: rows }, q)).count,
+      createManyStatements: (model, rows) => e.createManyStatements(model, rows),
     };
   }
 

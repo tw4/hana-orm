@@ -8,6 +8,19 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 
 ## [Unreleased]
 
+### Fixed
+
+- `mode: "insensitive"` and `ilike()` no longer miss rows that contain the Turkish `İ`. On column
+  tables HANA could turn `LOWER(a) = LOWER(b)` (and on some versions `LIKE`) into a comparison
+  that does not match `İ` with `i`; the value side is now `LOWER(?) || ''` (#83).
+- `insert().values(...).toSQL()` returns the INSERT instead of throwing: `params` of the first
+  row and `rows` with the parameters of every row. New `toSQLStatements()` lists every statement
+  when the rows set different fields; `prepare()` on an insert now says why it is not
+  supported (#84).
+- `db pull` writes the "no primary key" comment only on models without a primary key and without
+  a unique constraint, and says what is missing (`update`, `upsert`, `delete`) instead of calling
+  the model read-only (#85).
+
 ## [1.0.0-rc.2] - 2026-11-19
 
 The first version that shows up on npm with its README: `1.0.0-rc.1` was staged but never

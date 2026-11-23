@@ -78,6 +78,9 @@ Review the result before generating a client:
   point at the same columns.
 - Give relations clearer names.
 - Hide columns or tables the application should not use with `@ignore` / `@@ignore`.
+- Models of tables without a primary key or unique constraint carry a comment: their rows cannot
+  be addressed one by one, so the client has no `update`, `upsert` or `delete` for them (use
+  `updateMany` and `deleteMany`). A unique constraint is enough for the full API.
 
 ```sh
 npx hana-orm format
