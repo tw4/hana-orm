@@ -24,7 +24,7 @@ npm install hana-orm @sap/hana-client
 - `@sap/hana-client` is SAP's Node.js driver, the only native dependency. It is a peer
   dependency, so you pick its version (2.20 or newer). hana-orm loads it from your project.
 
-The current version is a release candidate for 1.0 (`1.0.0-rc.2`). Until 1.0 is out, it is also
+The current version is a release candidate for 1.0 (`1.0.0-rc.3`). Until 1.0 is out, it is also
 the default version, so the command above installs it.
 
 ### Optional: decimal.js

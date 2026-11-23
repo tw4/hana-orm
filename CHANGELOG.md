@@ -8,13 +8,18 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] - 2026-11-23
+
+Fixes from using the release candidate against an existing schema. `1.0.0-rc.1` and
+`1.0.0-rc.2` were staged on npm but never approved, so this is the first release candidate that
+`npm install hana-orm` installs (#81). No breaking changes since `1.0.0-rc.2`.
+
 ### Fixed
 
 - Editors suggest field names again inside `where`, `select`, `orderBy` and filter objects of
   `findMany`, `findFirst`, `findFirstOrThrow` and `count` (in an empty object and after a comma).
   The `= {}` type parameter default that broke TypeScript's completion is replaced by an
   overload for the call without arguments; result types are unchanged (#82).
-
 - `mode: "insensitive"` and `ilike()` no longer miss rows that contain the Turkish `İ`. On column
   tables HANA could turn `LOWER(a) = LOWER(b)` (and on some versions `LIKE`) into a comparison
   that does not match `İ` with `i`; the value side is now `LOWER(?) || ''` (#83).
@@ -95,7 +100,8 @@ pagination, relation ordering, implicit many-to-many), migrations (`plan`, `depl
 `resolve`, `baseline`, `diff`, `reset`, locking with heartbeat, renames and schema moves),
 `db pull` / `push` / `seed` / `execute`, the formatter and multi-file schemas.
 
-[Unreleased]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.2...main
+[Unreleased]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.3...main
+[1.0.0-rc.3]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.2...v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/tw4/hana-orm/compare/v1.0.0-rc.1...v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/tw4/hana-orm/releases/tag/v1.0.0-rc.1
 [0.1.0-alpha.0]: https://github.com/tw4/hana-orm/commits/main
