@@ -10,6 +10,11 @@ Each release section is used as the GitHub release notes (see [RELEASING.md](REL
 
 ### Fixed
 
+- Editors suggest field names again inside `where`, `select`, `orderBy` and filter objects of
+  `findMany`, `findFirst`, `findFirstOrThrow` and `count` (in an empty object and after a comma).
+  The `= {}` type parameter default that broke TypeScript's completion is replaced by an
+  overload for the call without arguments; result types are unchanged (#82).
+
 - `mode: "insensitive"` and `ilike()` no longer miss rows that contain the Turkish `İ`. On column
   tables HANA could turn `LOWER(a) = LOWER(b)` (and on some versions `LIKE`) into a comparison
   that does not match `İ` with `i`; the value side is now `LOWER(?) || ''` (#83).

@@ -92,3 +92,26 @@ async function nestedCursorChecks() {
   await db.user.findMany({ include: { posts: { cursor: { title: "x" } } } });
 }
 void nestedCursorChecks;
+
+// findMany / findFirst / findFirstOrThrow / count have an overload for a call without arguments
+// instead of a `= {}` type parameter default, which broke editor completion inside `where` (#82).
+async function noArgumentOverloadChecks() {
+  const all = await db.user.findMany();
+  expectType<Equal<typeof all, User[]>>();
+  const first = await db.user.findFirst();
+  expectType<Equal<typeof first, User | null>>();
+  const firstOrThrow = await db.user.findFirstOrThrow();
+  expectType<Equal<typeof firstOrThrow, User>>();
+  const n = await db.user.count();
+  expectType<Equal<typeof n, number>>();
+  const counts = await db.user.count({ select: { _all: true, name: true } });
+  expectType<Equal<typeof counts, { _all: number; name: number }>>();
+
+  // an optional arguments object still compiles, with the payload of the full args type
+  const maybeArgs: { where?: { active?: boolean } } | undefined = Math.random() > 0.5 ? { where: { active: true } } : undefined;
+  const some = await db.user.findMany(maybeArgs);
+  expectType<Equal<typeof some, User[]>>();
+  const someCount = await db.user.count(maybeArgs);
+  expectType<Equal<typeof someCount, number>>();
+}
+void noArgumentOverloadChecks;
